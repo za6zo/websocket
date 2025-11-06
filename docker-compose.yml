@@ -1,0 +1,72 @@
+version: '3.8'
+
+services:
+  websocket:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: za6zo-websocket
+    image: za6zo-websocket:latest
+
+    # Port mapping
+    ports:
+      - "8080:8080"  # WebSocket Server
+      - "8090:8090"  # WebSocket Bridge HTTP API
+
+    # Environment variables (override with .env file)
+    environment:
+      - NODE_ENV=${NODE_ENV:-production}
+      - WS_PORT=${WS_PORT:-8080}
+      - HTTP_PORT=${HTTP_PORT:-8090}
+      - API_URL=${API_URL}
+      - WEBSOCKET_URL=${WEBSOCKET_URL:-ws://localhost:8080}
+      - JWT_SECRET=${JWT_SECRET}
+      - EXPO_ACCESS_TOKEN=${EXPO_ACCESS_TOKEN:-}
+      - FCM_SERVER_KEY=${FCM_SERVER_KEY:-}
+
+    # Load environment from .env file
+    env_file:
+      - .env
+
+    # Restart policy
+    restart: unless-stopped
+
+    # Health check
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8090/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+
+    # Resource limits (adjust based on your needs)
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 512M
+        reservations:
+          cpus: '0.5'
+          memory: 256M
+
+    # Logging configuration
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+    # Network configuration
+    networks:
+      - za6zo-network
+
+# Networks
+networks:
+  za6zo-network:
+    driver: bridge
+    name: za6zo-network
+
+# Optional: Volumes for persistent data (if needed)
+# volumes:
+#   websocket-data:
+#     name: za6zo-websocket-data
