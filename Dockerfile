@@ -24,7 +24,7 @@ RUN addgroup --system --gid 1001 nodejs && \
 COPY package*.json ./
 
 # Install dependencies
-RUN npm ci --only=production && \
+RUN npm install --only=production && \
     npm cache clean --force
 
 # Copy application files
