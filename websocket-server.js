@@ -246,6 +246,30 @@ app.post('/notify', (req, res) => {
     // Notify passenger that driver cancelled the route
     notifyPassengerAboutRouteCancellation(payload);
     res.json({ success: true, message: 'Route cancellation notification sent to passenger' });
+  } else if (type === 'subscription_request') {
+    // Notify driver about new subscription request
+    notifyDriverAboutSubscriptionRequest(payload);
+    res.json({ success: true, message: 'Subscription request notification sent to driver' });
+  } else if (type === 'subscription_status') {
+    // Notify passenger about subscription request status
+    notifyPassengerAboutSubscriptionStatus(payload);
+    res.json({ success: true, message: 'Subscription status notification sent to passenger' });
+  } else if (type === 'subscription_confirmed') {
+    // Notify both parties about confirmed subscription
+    notifySubscriptionConfirmed(payload);
+    res.json({ success: true, message: 'Subscription confirmation sent to both parties' });
+  } else if (type === 'subscription_trip_update') {
+    // Notify about subscription trip update
+    notifySubscriptionTrip(payload);
+    res.json({ success: true, message: 'Subscription trip notification sent' });
+  } else if (type === 'city_trip_request') {
+    // Notify drivers about new city trip request
+    notifyCityTripRequest(payload);
+    res.json({ success: true, message: 'City trip request broadcasted to drivers' });
+  } else if (type === 'city_trip_update') {
+    // Notify about city trip status update
+    notifyCityTripUpdate(payload);
+    res.json({ success: true, message: 'City trip update notification sent' });
   } else {
     res.status(400).json({ error: 'Unknown notification type: ' + type });
   }
@@ -555,6 +579,12 @@ function handleMessage(userId, data) {
         // Handle driver accepting passenger request from API server
         console.log('✅ Processing driver_accepted_request notification from API server');
         notifyPassengerAboutAcceptance(payload);
+        return;
+      case 'subscription_request':
+        // Handle subscription request notification from API server
+        console.log('📅 Processing subscription_request notification from API server');
+        console.log('📥 Subscription request payload:', JSON.stringify(payload, null, 2));
+        notifyDriverAboutSubscriptionRequest(payload);
         return;
     }
   }
@@ -2714,6 +2744,97 @@ function notifyDriverAboutRequestCancellation(payload) {
   return driverNotified;
 }
 
+// Notify driver about new subscription request
+function notifyDriverAboutSubscriptionRequest(payload) {
+  const {
+    targetDriverId,
+    requestId,
+    passengerId,
+    passengerName,
+    passengerImage,
+    routeId,
+    destinationName,
+    pickupAddress,
+    acceptDriverPrice,
+    proposedPrice,
+    monthlyPrice,
+    message,
+    status
+  } = payload;
+
+  console.log(`📅 New subscription request for driver ${targetDriverId}`);
+  console.log(`   Passenger: ${passengerName} (${passengerId})`);
+  console.log(`   Route: ${routeId} - ${destinationName}`);
+  console.log(`   Pickup: ${pickupAddress}`);
+  console.log(`   Monthly Price: ${monthlyPrice}`);
+
+  // Prepare notification message
+  const notification = {
+    type: 'subscription_request',
+    payload: {
+      requestId,
+      passengerId,
+      passengerName,
+      passengerImage,
+      routeId,
+      destinationName,
+      pickupAddress,
+      acceptDriverPrice,
+      proposedPrice,
+      monthlyPrice,
+      message,
+      status
+    }
+  };
+
+  // Try multiple methods to find and notify the driver
+  let driverNotified = false;
+
+  // Method 1: Try driverId mapping
+  const driverUserId = driverIdToUserId.get(targetDriverId);
+  if (driverUserId) {
+    console.log(`📍 Found driver mapping: ${targetDriverId} → ${driverUserId}`);
+    const sent = sendToUser(driverUserId, notification);
+    if (sent) {
+      console.log(`✅ Notified driver ${targetDriverId} (user ${driverUserId}) about subscription request`);
+      driverNotified = true;
+    }
+  }
+
+  // Method 2: Try direct driverId as userId
+  if (!driverNotified) {
+    const sent = sendToUser(targetDriverId, notification);
+    if (sent) {
+      console.log(`✅ Notified driver ${targetDriverId} directly about subscription request`);
+      driverNotified = true;
+    }
+  }
+
+  // Method 3: Search all connections for this driver
+  if (!driverNotified) {
+    console.log(`🔍 Searching all connections for driver ${targetDriverId}...`);
+    connections.forEach((conn, userId) => {
+      if (!driverNotified && conn.role === 'driver') {
+        if (conn.driverId === targetDriverId || userId === targetDriverId) {
+          const sent = sendToUser(userId, notification);
+          if (sent) {
+            console.log(`✅ Found and notified driver via connection search: ${userId}`);
+            driverNotified = true;
+          }
+        }
+      }
+    });
+  }
+
+  if (!driverNotified) {
+    console.log(`⚠️ Could not find driver ${targetDriverId} in any connection!`);
+    console.log(`📊 Current driver mappings:`, Array.from(driverIdToUserId.entries()));
+    console.log(`📊 Current connections:`, Array.from(connections.keys()));
+  }
+
+  return driverNotified;
+}
+
 // Notify passenger about driver accepting their request
 function notifyPassengerAboutAcceptance(payload) {
   const {
@@ -2880,6 +3001,177 @@ function notifyPassengerAboutRouteCancellation(payload) {
   }
 
   return passengerNotified;
+}
+
+// ========================================
+// MONTHLY SUBSCRIPTION & CITY-TO-CITY NOTIFICATION HANDLERS
+// ========================================
+
+// Notify driver about new subscription request
+function notifyDriverAboutSubscriptionRequest(payload) {
+  const { targetDriverId, requestId, passengerId, passengerName, destinationName, proposedPrice, monthlyPrice } = payload;
+
+  console.log(`📢 [Subscription] Notifying driver ${targetDriverId} about new subscription request ${requestId}`);
+
+  const driverUserId = driverIdToUserId.get(parseInt(targetDriverId)) || targetDriverId;
+
+  const notification = {
+    type: 'subscription_request',
+    payload: {
+      requestId,
+      passengerId,
+      passengerName,
+      destinationName,
+      proposedPrice,
+      monthlyPrice,
+      timestamp: new Date().toISOString()
+    }
+  };
+
+  if (sendToUser(driverUserId, notification)) {
+    console.log(`✅ Notified driver ${targetDriverId} about subscription request`);
+  } else {
+    console.log(`❌ Failed to notify driver ${targetDriverId} - not connected`);
+  }
+}
+
+// Notify passenger about subscription request status
+function notifyPassengerAboutSubscriptionStatus(payload) {
+  const { passengerId, requestId, status, driverName, finalPrice, counterPrice } = payload;
+
+  console.log(`📢 [Subscription] Notifying passenger ${passengerId} - status: ${status}`);
+
+  const passengerUserId = riderIdToUserId.get(parseInt(passengerId)) || passengerId;
+
+  const notification = {
+    type: status === 'accepted' ? 'subscription_request_accepted' :
+          status === 'rejected' ? 'subscription_request_rejected' :
+          'subscription_counter_offer',
+    payload: {
+      requestId,
+      driverName,
+      finalPrice,
+      counterPrice,
+      timestamp: new Date().toISOString()
+    }
+  };
+
+  if (sendToUser(passengerUserId, notification)) {
+    console.log(`✅ Notified passenger ${passengerId} about subscription ${status}`);
+  }
+}
+
+// Notify both parties about subscription confirmation
+function notifySubscriptionConfirmed(payload) {
+  const { subscriptionId, passengerId, driverId, destinationName, startDate, monthlyPrice } = payload;
+
+  console.log(`📢 [Subscription] Notifying about confirmed subscription ${subscriptionId}`);
+
+  const passengerUserId = riderIdToUserId.get(parseInt(passengerId)) || passengerId;
+  const driverUserId = driverIdToUserId.get(parseInt(driverId)) || driverId;
+
+  const passengerNotification = {
+    type: 'subscription_confirmed',
+    payload: {
+      subscriptionId,
+      destinationName,
+      startDate,
+      monthlyPrice,
+      timestamp: new Date().toISOString()
+    }
+  };
+
+  const driverNotification = {
+    type: 'new_subscriber',
+    payload: {
+      subscriptionId,
+      destinationName,
+      startDate,
+      monthlyPrice,
+      timestamp: new Date().toISOString()
+    }
+  };
+
+  sendToUser(passengerUserId, passengerNotification);
+  sendToUser(driverUserId, driverNotification);
+}
+
+// Notify about subscription trip (daily scheduled trip)
+function notifySubscriptionTrip(payload) {
+  const { tripId, passengerId, driverId, scheduledTime, status } = payload;
+
+  console.log(`📢 [Subscription Trip] Notifying about trip ${tripId} - status: ${status}`);
+
+  const passengerUserId = riderIdToUserId.get(parseInt(passengerId)) || passengerId;
+  const driverUserId = driverIdToUserId.get(parseInt(driverId)) || driverId;
+
+  const notification = {
+    type: 'subscription_trip_update',
+    payload: {
+      tripId,
+      scheduledTime,
+      status,
+      timestamp: new Date().toISOString()
+    }
+  };
+
+  sendToUser(passengerUserId, notification);
+  sendToUser(driverUserId, notification);
+}
+
+// Notify about city-to-city trip request
+function notifyCityTripRequest(payload) {
+  const { tripId, passengerId, fromCity, toCity, scheduledDate, proposedPrice } = payload;
+
+  console.log(`📢 [City Trip] New trip request ${tripId} from ${fromCity} to ${toCity}`);
+
+  // Broadcast to available drivers (in production, filter by location/availability)
+  const notification = {
+    type: 'city_trip_request',
+    payload: {
+      tripId,
+      passengerId,
+      fromCity,
+      toCity,
+      scheduledDate,
+      proposedPrice,
+      timestamp: new Date().toISOString()
+    }
+  };
+
+  // For now, broadcast to all connected drivers
+  // In production, you'd query database for drivers on this route
+  connections.forEach((conn, userId) => {
+    if (conn.role === 'DRIVER') {
+      sendToUser(userId, notification);
+    }
+  });
+}
+
+// Notify about city trip status updates
+function notifyCityTripUpdate(payload) {
+  const { tripId, passengerId, driverId, status, finalPrice, counterPrice } = payload;
+
+  console.log(`📢 [City Trip] Trip ${tripId} status update: ${status}`);
+
+  const passengerUserId = riderIdToUserId.get(parseInt(passengerId)) || passengerId;
+  const driverUserId = driverId ? (driverIdToUserId.get(parseInt(driverId)) || driverId) : null;
+
+  const notification = {
+    type: 'city_trip_update',
+    payload: {
+      tripId,
+      status,
+      finalPrice,
+      counterPrice,
+      timestamp: new Date().toISOString()
+    }
+  };
+
+  sendToUser(passengerUserId, notification);
+  if (driverUserId) {
+    sendToUser(driverUserId, notification);
+  }
 }
 
 // Add these handlers to the handleMessage function's switch statement
