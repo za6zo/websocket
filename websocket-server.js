@@ -242,6 +242,10 @@ app.post('/notify', (req, res) => {
     // Notify passenger that driver accepted their request
     notifyPassengerAboutAcceptance(payload);
     res.json({ success: true, message: 'Acceptance notification sent to passenger' });
+  } else if (type === 'driver_rejected_request' || type === 'passenger_request_rejected') {
+    // Notify passenger that driver rejected their request
+    notifyPassengerAboutRejection(payload);
+    res.json({ success: true, message: 'Rejection notification sent to passenger' });
   } else if (type === 'route_cancelled') {
     // Notify passenger that driver cancelled the route
     notifyPassengerAboutRouteCancellation(payload);
@@ -579,6 +583,12 @@ function handleMessage(userId, data) {
         // Handle driver accepting passenger request from API server
         console.log('✅ Processing driver_accepted_request notification from API server');
         notifyPassengerAboutAcceptance(payload);
+        return;
+      case 'driver_rejected_request':
+      case 'passenger_request_rejected':
+        // Handle driver rejecting passenger request from API server
+        console.log('❌ Processing driver_rejected_request notification from API server');
+        notifyPassengerAboutRejection(payload);
         return;
       case 'subscription_request':
         // Handle subscription request notification from API server
@@ -2925,6 +2935,84 @@ function notifyPassengerAboutAcceptance(payload) {
     console.log(`⚠️ Could not find passenger ${passengerId} in any connection!`);
     console.log(`📊 Current rider mappings:`, Array.from(riderIdToUserId.entries()));
     console.log(`📊 Current connections:`, Array.from(connections.keys()));
+  }
+
+  return passengerNotified;
+}
+
+// Notify passenger about driver rejecting their request
+function notifyPassengerAboutRejection(payload) {
+  const {
+    requestId,
+    routeId,
+    passengerId,
+    driverId,
+    reason,
+    message
+  } = payload;
+
+  console.log(`❌ Driver ${driverId} rejected passenger ${passengerId}'s request`);
+  console.log(`   Reason: ${reason || 'Not specified'}`);
+
+  // Prepare notification message
+  const notification = {
+    type: 'driver_rejected_passenger',
+    payload: {
+      requestId,
+      routeId,
+      driverId,
+      passengerId,
+      reason: reason || 'Driver unavailable',
+      message: message || 'Your ride request was declined. Please try another driver.'
+    }
+  };
+
+  // Try multiple methods to find and notify the passenger
+  let passengerNotified = false;
+
+  // Method 1: Try direct passengerId as userId
+  const sent = sendToUser(passengerId, notification);
+  if (sent) {
+    console.log(`✅ Notified passenger ${passengerId} about driver rejection`);
+    passengerNotified = true;
+  }
+
+  // Method 2: Try riderId mapping (passengers might be stored as riders)
+  if (!passengerNotified) {
+    let passengerUserId = riderIdToUserId.get(passengerId);
+    if (!passengerUserId && typeof passengerId === 'number') {
+      passengerUserId = riderIdToUserId.get(String(passengerId));
+    } else if (!passengerUserId && typeof passengerId === 'string') {
+      passengerUserId = riderIdToUserId.get(parseInt(passengerId, 10));
+    }
+
+    if (passengerUserId) {
+      const sent = sendToUser(passengerUserId, notification);
+      if (sent) {
+        console.log(`✅ Notified passenger via riderId mapping: ${passengerId} → ${passengerUserId}`);
+        passengerNotified = true;
+      }
+    }
+  }
+
+  // Method 3: Search all connections for this passenger
+  if (!passengerNotified) {
+    console.log(`🔍 Searching all connections for passenger ${passengerId}...`);
+    connections.forEach((conn, userId) => {
+      if (!passengerNotified && (conn.role === 'rider' || conn.role === 'passenger')) {
+        if (conn.riderId === passengerId || userId === passengerId) {
+          const sent = sendToUser(userId, notification);
+          if (sent) {
+            console.log(`✅ Found and notified passenger via connection search: ${userId}`);
+            passengerNotified = true;
+          }
+        }
+      }
+    });
+  }
+
+  if (!passengerNotified) {
+    console.log(`⚠️ Could not find passenger ${passengerId} in any connection!`);
   }
 
   return passengerNotified;
