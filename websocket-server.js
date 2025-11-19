@@ -800,6 +800,16 @@ function handleMessage(userId, data) {
       handleDriverReminder(userId, payload);
       break;
 
+    case 'passenger_reminder':
+      // Updated event name for driver reminder to passenger
+      handlePassengerReminder(userId, payload);
+      break;
+
+    case 'driver_arrived_notification':
+      // Driver notifies passenger of arrival
+      handleDriverArrivedNotification(userId, payload);
+      break;
+
     case 'waiting_charge_update':
       // Waiting charges update from driver to passenger
       handleWaitingChargeUpdate(userId, payload);
@@ -833,6 +843,12 @@ function handleMessage(userId, data) {
     case 'stop_view_route':
       // Passenger stopped viewing route
       handleStopViewRoute(userId);
+      break;
+
+    case 'trip_cancelled':
+      // Trip cancelled by driver or passenger
+      console.log('🚫 Processing trip cancellation:', payload);
+      notifyTripCancelled(payload);
       break;
 
     default:
@@ -2356,6 +2372,137 @@ async function handleDriverReminder(driverId, payload) {
   return passengerNotified;
 }
 
+// Handle passenger reminder with updated event name
+async function handlePassengerReminder(driverId, payload) {
+  const { tripId, passengerId, driverId: payloadDriverId, driverName, pickupAddress, message, waitingTime, waitingCharges, timestamp } = payload;
+
+  console.log(`⏰ Driver ${driverId} sending passenger reminder`);
+  console.log(`   Passenger: ${passengerId}, Waiting: ${waitingTime}s, Charges: Rs.${waitingCharges}`);
+
+  // Prepare notification for passenger
+  const reminderNotification = {
+    type: 'passenger_reminder',
+    payload: {
+      tripId,
+      driverId: payloadDriverId || driverId,
+      driverName: driverName || 'Your driver',
+      pickupAddress: pickupAddress || '',
+      message: message || 'Your driver is waiting for you',
+      waitingTime: waitingTime || 0,
+      waitingCharges: waitingCharges || 0,
+      timestamp: timestamp || new Date().toISOString()
+    }
+  };
+
+  // Try to send to passenger
+  let passengerNotified = false;
+
+  // Method 1: Direct passenger ID
+  const sent1 = sendToUser(passengerId, reminderNotification);
+  if (sent1) {
+    console.log(`✅ Reminder sent directly to passenger ${passengerId}`);
+    passengerNotified = true;
+  }
+
+  // Method 2: Try mapping
+  if (!passengerNotified) {
+    const riderUserId = riderIdToUserId.get(passengerId);
+    if (riderUserId) {
+      const sent2 = sendToUser(riderUserId, reminderNotification);
+      if (sent2) {
+        console.log(`✅ Reminder sent via mapping to passenger ${passengerId}`);
+        passengerNotified = true;
+      }
+    }
+  }
+
+  // Method 3: Search connections
+  if (!passengerNotified) {
+    connections.forEach((conn, userId) => {
+      if (!passengerNotified && (conn.role === 'rider' || conn.role === 'passenger')) {
+        if (conn.riderId === passengerId || userId === passengerId || conn.tripId === tripId) {
+          const sent3 = sendToUser(userId, reminderNotification);
+          if (sent3) {
+            console.log(`✅ Reminder sent via search to user ${userId}`);
+            passengerNotified = true;
+          }
+        }
+      }
+    });
+  }
+
+  if (!passengerNotified) {
+    console.log(`⚠️ Could not find passenger ${passengerId}`);
+  }
+
+  return passengerNotified;
+}
+
+// Handle driver arrived notification
+async function handleDriverArrivedNotification(driverId, payload) {
+  const { tripId, riderId, driverId: payloadDriverId, driverName, pickupAddress, dropoffAddress, message } = payload;
+
+  console.log(`🚗 Driver ${driverId} notifying passenger of arrival`);
+  console.log(`   Passenger: ${riderId}, Trip: ${tripId}`);
+
+  // Prepare notification for passenger
+  const arrivalNotification = {
+    type: 'driver_arrived_notification',
+    payload: {
+      tripId,
+      driverId: payloadDriverId || driverId,
+      driverName: driverName || 'Your driver',
+      pickupAddress: pickupAddress || '',
+      dropoffAddress: dropoffAddress || '',
+      message: message || 'Your driver has arrived at the pickup location!',
+      timestamp: new Date().toISOString()
+    }
+  };
+
+  // Try to send to passenger
+  let passengerNotified = false;
+
+  // Method 1: Direct rider ID
+  const sent1 = sendToUser(riderId, arrivalNotification);
+  if (sent1) {
+    console.log(`✅ Arrival notification sent directly to passenger ${riderId}`);
+    passengerNotified = true;
+  }
+
+  // Method 2: Try mapping
+  if (!passengerNotified) {
+    const riderUserId = riderIdToUserId.get(riderId);
+    if (riderUserId) {
+      const sent2 = sendToUser(riderUserId, arrivalNotification);
+      if (sent2) {
+        console.log(`✅ Arrival notification sent via mapping to passenger ${riderId}`);
+        passengerNotified = true;
+      }
+    }
+  }
+
+  // Method 3: Search connections
+  if (!passengerNotified) {
+    connections.forEach((conn, userId) => {
+      if (!passengerNotified && (conn.role === 'rider' || conn.role === 'passenger')) {
+        if (conn.riderId === riderId || userId === riderId || conn.tripId === tripId) {
+          const sent3 = sendToUser(userId, arrivalNotification);
+          if (sent3) {
+            console.log(`✅ Arrival notification sent via search to user ${userId}`);
+            passengerNotified = true;
+          }
+        }
+      }
+    });
+  }
+
+  if (!passengerNotified) {
+    console.log(`⚠️ Could not find passenger ${riderId}`);
+  }
+
+  return passengerNotified;
+}
+
 // Handle waiting charge updates
 async function handleWaitingChargeUpdate(driverId, payload) {
   const { tripId, riderId, waitingCharges, message, timestamp } = payload;
@@ -2620,6 +2767,7 @@ function notifyDriverAboutPassengerRequest(payload) {
     dropoffLocation,
     pickupDistance,
     estimatedFare,
+    requestedSeats,
     timestamp
   } = payload;
 
@@ -2627,6 +2775,7 @@ function notifyDriverAboutPassengerRequest(payload) {
   console.log(`   Passenger: ${passengerInfo.name} (${passengerId})`);
   console.log(`   Pickup: ${pickupLocation.address}`);
   console.log(`   Dropoff: ${dropoffLocation.address}`);
+  console.log(`   Seats requested: ${requestedSeats || 1}`);
 
   // Prepare notification message
   const notification = {
@@ -2640,6 +2789,7 @@ function notifyDriverAboutPassengerRequest(payload) {
       dropoffLocation,
       pickupDistance,
       estimatedFare,
+      requestedSeats: requestedSeats || 1,
       timestamp
     }
   };
