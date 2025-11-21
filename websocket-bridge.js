@@ -196,6 +196,63 @@ app.post('/notify', async (req, res) => {
         console.log('📤 Forwarded new_trip_request to WebSocket server');
         break;
 
+      case 'city_trip_accepted':
+        // Forward city trip accepted notification
+        console.log('✅ CITY_TRIP_ACCEPTED notification received!');
+        console.log('🔍 Trip ID:', payload.tripId);
+        console.log('🔍 Driver ID:', payload.driverId);
+        console.log('🔍 Passenger ID:', payload.userId);
+        ws.send(JSON.stringify({ type, payload }));
+        console.log('📤 Forwarded city_trip_accepted to WebSocket server');
+        break;
+
+      case 'city_trip_rejected':
+        // Forward city trip rejected notification
+        console.log('❌ CITY_TRIP_REJECTED notification received!');
+        console.log('🔍 Trip ID:', payload.tripId);
+        console.log('🔍 Driver ID:', payload.driverId);
+        console.log('🔍 Passenger ID:', payload.userId);
+        ws.send(JSON.stringify({ type, payload }));
+        console.log('📤 Forwarded city_trip_rejected to WebSocket server');
+        break;
+
+      case 'city_trip_counter_offer':
+        // Forward city trip counter offer notification
+        console.log('💰 CITY_TRIP_COUNTER_OFFER notification received!');
+        console.log('🔍 Trip ID:', payload.tripId);
+        console.log('🔍 Driver Proposed Price:', payload.driverProposedPrice);
+        console.log('🔍 Passenger ID:', payload.userId);
+        ws.send(JSON.stringify({ type, payload }));
+        console.log('📤 Forwarded city_trip_counter_offer to WebSocket server');
+        break;
+
+      case 'city_trip_price_agreed':
+        // Forward city trip price agreed notification
+        console.log('🤝 CITY_TRIP_PRICE_AGREED notification received!');
+        console.log('🔍 Trip ID:', payload.tripId);
+        console.log('🔍 Final Price:', payload.finalPrice);
+        console.log('🔍 Driver ID:', payload.userId);
+        ws.send(JSON.stringify({ type, payload }));
+        console.log('📤 Forwarded city_trip_price_agreed to WebSocket server');
+        break;
+
+      case 'city_trip_started':
+        // Forward city trip started notification
+        console.log('🚗 CITY_TRIP_STARTED notification received!');
+        console.log('🔍 Trip ID:', payload.tripId);
+        ws.send(JSON.stringify({ type, payload }));
+        console.log('📤 Forwarded city_trip_started to WebSocket server');
+        break;
+
+      case 'city_trip_completed':
+        // Forward city trip completed notification
+        console.log('🏁 CITY_TRIP_COMPLETED notification received!');
+        console.log('🔍 Trip ID:', payload.tripId);
+        console.log('🔍 Final Price:', payload.finalPrice);
+        ws.send(JSON.stringify({ type, payload }));
+        console.log('📤 Forwarded city_trip_completed to WebSocket server');
+        break;
+
       default:
         // Forward any other message types
         console.log(`📨 Forwarding unknown message type: ${type}`);

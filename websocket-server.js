@@ -270,6 +270,34 @@ app.post('/notify', (req, res) => {
     // Notify drivers about new city trip request
     notifyCityTripRequest(payload);
     res.json({ success: true, message: 'City trip request broadcasted to drivers' });
+  } else if (type === 'city_trip_direct_request') {
+    // Notify specific driver about direct trip request
+    notifyCityTripDirectRequest(payload);
+    res.json({ success: true, message: 'City trip direct request sent to driver' });
+  } else if (type === 'city_trip_accepted') {
+    // Notify passenger that driver accepted trip
+    notifyCityTripAccepted(payload);
+    res.json({ success: true, message: 'City trip accepted notification sent' });
+  } else if (type === 'city_trip_rejected') {
+    // Notify passenger that driver rejected trip
+    notifyCityTripRejected(payload);
+    res.json({ success: true, message: 'City trip rejected notification sent' });
+  } else if (type === 'city_trip_counter_offer') {
+    // Notify passenger about driver counter offer
+    notifyCityTripCounterOffer(payload);
+    res.json({ success: true, message: 'City trip counter offer sent to passenger' });
+  } else if (type === 'city_trip_price_agreed') {
+    // Notify driver that passenger accepted counter offer
+    notifyCityTripPriceAgreed(payload);
+    res.json({ success: true, message: 'City trip price agreed notification sent to driver' });
+  } else if (type === 'city_trip_started') {
+    // Notify passenger that trip started
+    notifyCityTripStarted(payload);
+    res.json({ success: true, message: 'City trip started notification sent' });
+  } else if (type === 'city_trip_completed') {
+    // Notify passenger that trip completed
+    notifyCityTripCompleted(payload);
+    res.json({ success: true, message: 'City trip completed notification sent' });
   } else if (type === 'city_trip_update') {
     // Notify about city trip status update
     notifyCityTripUpdate(payload);
@@ -635,11 +663,24 @@ function handleMessage(userId, data) {
         const userIdStr = String(userId);
         driverIdToUserId.set(userIdStr, userId);
 
+        // IMPORTANT: Also map the database userId if provided (for backend notifications)
+        if (payload.userId && payload.userId !== userId) {
+          driverIdToUserId.set(payload.userId, userId);
+          driverIdToUserId.set(String(payload.userId), userId);
+          const payloadUserIdInt = parseInt(payload.userId, 10);
+          if (!isNaN(payloadUserIdInt)) {
+            driverIdToUserId.set(payloadUserIdInt, userId);
+          }
+        }
+
         console.log(`  🚗 DRIVER MAPPING CREATED:`);
         console.log(`    Driver ID: ${payload.driverId}`);
         console.log(`    User ID: ${userId}`);
         console.log(`    Mapping: ${payload.driverId} → ${userId}`);
         console.log(`    Also mapped: ${userId} → ${userId} (for Clerk compatibility)`);
+        if (payload.userId && payload.userId !== userId) {
+          console.log(`    Database UserId mapping: ${payload.userId} → ${userId}`);
+        }
         // console.log(`  📊 All driver mappings:`, Array.from(driverIdToUserId.entries()));
         // console.log(`  📊 All connections:`, Array.from(connections.keys()));
       }
@@ -2930,7 +2971,7 @@ function notifyDriverAboutSubscriptionRequest(payload) {
 
   // Prepare notification message
   const notification = {
-    type: 'subscription_request',
+    type: 'newSubscriptionRequest',
     payload: {
       requestId,
       passengerId,
@@ -3411,6 +3452,205 @@ function notifyCityTripUpdate(payload) {
     sendToUser(driverUserId, notification);
   }
 }
+
+// ==================== CITY-TO-CITY TRIP NOTIFICATION FUNCTIONS ====================
+
+// Notify specific driver about direct trip request
+function notifyCityTripDirectRequest(payload) {
+  const { tripId, userId, passengerId, passengerName, fromCity, toCity, scheduledDate, proposedPrice } = payload;
+
+  console.log(`📢 [City Trip Direct] Direct request ${tripId} sent to driver userId: ${userId}`);
+
+  // Try multiple mappings to find the driver's Clerk ID
+  let driverClerkId = driverIdToUserId.get(userId);
+  if (!driverClerkId) driverClerkId = driverIdToUserId.get(String(userId));
+  if (!driverClerkId) driverClerkId = driverIdToUserId.get(parseInt(userId));
+
+  if (!driverClerkId) {
+    console.error(`⚠️ Could not find Clerk ID for driver userId: ${userId}`);
+    console.log(`📊 Available driver mappings:`, Array.from(driverIdToUserId.entries()));
+    return;
+  }
+
+  const notification = {
+    type: 'city_trip_direct_request',
+    payload: {
+      tripId,
+      passengerId,
+      passengerName,
+      fromCity,
+      toCity,
+      scheduledDate,
+      proposedPrice,
+      timestamp: new Date().toISOString()
+    }
+  };
+
+  console.log(`✅ [City Trip Direct] Sending to Clerk ID: ${driverClerkId}`);
+  sendToUser(driverClerkId, notification);
+}
+
+// Notify passenger that driver accepted trip
+function notifyCityTripAccepted(payload) {
+  const { tripId, userId, driverId, fromCity, toCity, scheduledDate, finalPrice, vehicle } = payload;
+
+  console.log(`📢 [City Trip Accepted] Driver ${driverId} accepted trip ${tripId}`);
+
+  const passengerUserId = riderIdToUserId.get(parseInt(userId)) || userId;
+
+  const notification = {
+    type: 'city_trip_accepted',
+    payload: {
+      tripId,
+      driverId,
+      fromCity,
+      toCity,
+      scheduledDate,
+      finalPrice,
+      vehicle,
+      timestamp: new Date().toISOString()
+    }
+  };
+
+  sendToUser(passengerUserId, notification);
+}
+
+// Notify passenger that driver rejected trip
+function notifyCityTripRejected(payload) {
+  const { tripId, userId, driverId, fromCity, toCity } = payload;
+
+  console.log(`📢 [City Trip Rejected] Driver ${driverId} rejected trip ${tripId}`);
+
+  const passengerUserId = riderIdToUserId.get(parseInt(userId)) || userId;
+
+  const notification = {
+    type: 'city_trip_rejected',
+    payload: {
+      tripId,
+      driverId,
+      fromCity,
+      toCity,
+      timestamp: new Date().toISOString()
+    }
+  };
+
+  sendToUser(passengerUserId, notification);
+}
+
+// Notify passenger about driver counter offer
+function notifyCityTripCounterOffer(payload) {
+  const { tripId, userId, driverId, fromCity, toCity, driverProposedPrice, passengerProposedPrice } = payload;
+
+  console.log(`📢 [City Trip Counter] Driver ${driverId} sent counter offer for trip ${tripId}: PKR ${driverProposedPrice}`);
+
+  const passengerUserId = riderIdToUserId.get(parseInt(userId)) || userId;
+
+  const notification = {
+    type: 'city_trip_counter_offer',
+    payload: {
+      tripId,
+      driverId,
+      fromCity,
+      toCity,
+      driverProposedPrice,
+      passengerProposedPrice,
+      timestamp: new Date().toISOString()
+    }
+  };
+
+  sendToUser(passengerUserId, notification);
+}
+
+// Notify driver that passenger accepted counter offer
+function notifyCityTripPriceAgreed(payload) {
+  const { tripId, userId, passengerName, fromCity, toCity, finalPrice } = payload;
+
+  console.log(`📢 [City Trip Price Agreed] Passenger agreed to price for trip ${tripId}: PKR ${finalPrice}`);
+
+  const driverUserId = driverIdToUserId.get(parseInt(userId)) || userId;
+
+  const notification = {
+    type: 'city_trip_price_agreed',
+    payload: {
+      tripId,
+      passengerName,
+      fromCity,
+      toCity,
+      finalPrice,
+      timestamp: new Date().toISOString()
+    }
+  };
+
+  sendToUser(driverUserId, notification);
+}
+
+// Notify passenger that trip started
+function notifyCityTripStarted(payload) {
+  const { tripId, userId } = payload;
+
+  console.log(`📢 [City Trip Started] Trip ${tripId} has started for passenger userId: ${userId}`);
+
+  // Try multiple mapping strategies to find passenger's Clerk ID
+  let passengerClerkId = riderIdToUserId.get(parseInt(userId));
+  if (!passengerClerkId) passengerClerkId = riderIdToUserId.get(String(userId));
+  if (!passengerClerkId) passengerClerkId = riderIdToUserId.get(userId);
+
+  if (!passengerClerkId) {
+    console.error(`⚠️ Could not find Clerk ID for passenger userId: ${userId}`);
+    console.log(`📊 Available rider mappings:`, Array.from(riderIdToUserId.entries()));
+    console.log(`📊 Available connections:`, Array.from(connections.keys()));
+    // Try sending directly with userId as fallback
+    passengerClerkId = userId;
+  } else {
+    console.log(`✅ [City Trip Started] Found passenger Clerk ID: ${passengerClerkId}`);
+  }
+
+  const notification = {
+    type: 'city_trip_started',
+    payload: {
+      tripId,
+      timestamp: new Date().toISOString()
+    }
+  };
+
+  console.log(`📤 [City Trip Started] Sending notification to passenger: ${passengerClerkId}`);
+  sendToUser(passengerClerkId, notification);
+}
+
+// Notify passenger that trip completed
+function notifyCityTripCompleted(payload) {
+  const { tripId, userId, finalPrice } = payload;
+
+  console.log(`📢 [City Trip Completed] Trip ${tripId} completed for passenger userId: ${userId}. Final price: PKR ${finalPrice}`);
+
+  // Try multiple mapping strategies to find passenger's Clerk ID
+  let passengerClerkId = riderIdToUserId.get(parseInt(userId));
+  if (!passengerClerkId) passengerClerkId = riderIdToUserId.get(String(userId));
+  if (!passengerClerkId) passengerClerkId = riderIdToUserId.get(userId);
+
+  if (!passengerClerkId) {
+    console.error(`⚠️ Could not find Clerk ID for passenger userId: ${userId}`);
+    console.log(`📊 Available rider mappings:`, Array.from(riderIdToUserId.entries()));
+    // Try sending directly with userId as fallback
+    passengerClerkId = userId;
+  } else {
+    console.log(`✅ [City Trip Completed] Found passenger Clerk ID: ${passengerClerkId}`);
+  }
+
+  const notification = {
+    type: 'city_trip_completed',
+    payload: {
+      tripId,
+      finalPrice,
+      timestamp: new Date().toISOString()
+    }
+  };
+
+  console.log(`📤 [City Trip Completed] Sending notification to passenger: ${passengerClerkId}`);
+  sendToUser(passengerClerkId, notification);
+}
+
+// ==================== END CITY-TO-CITY NOTIFICATION FUNCTIONS ====================
 
 // Add these handlers to the handleMessage function's switch statement
 // Update the switch statement in handleMessage to include these cases:
