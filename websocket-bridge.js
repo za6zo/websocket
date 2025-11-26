@@ -253,6 +253,19 @@ app.post('/notify', async (req, res) => {
         console.log('📤 Forwarded city_trip_completed to WebSocket server');
         break;
 
+      case 'subscription_cancelled':
+      case 'subscription_paused':
+        // Forward subscription cancellation/pause notification to driver
+        console.log(`🔔 ${type.toUpperCase()} notification received!`);
+        console.log('🔍 Driver ID:', payload.driverId);
+        console.log('🔍 Passenger ID:', payload.passengerId);
+        console.log('🔍 Subscription ID:', payload.subscriptionId);
+        console.log('🔍 Passenger Name:', payload.passengerName);
+        console.log('🔍 Destination:', payload.destinationName);
+        ws.send(JSON.stringify({ type, payload }));
+        console.log(`📤 Forwarded ${type} to WebSocket server`);
+        break;
+
       default:
         // Forward any other message types
         console.log(`📨 Forwarding unknown message type: ${type}`);
