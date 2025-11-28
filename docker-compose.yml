@@ -11,10 +11,9 @@ services:
     pull_policy: build
 
     # Port mapping
-    # Using different host ports to avoid conflicts with existing services
     ports:
-      - "8081:8080"  # WebSocket Server (Host:Container)
-      - "8091:8090"  # WebSocket Bridge HTTP API (Host:Container)
+      - "8080:8080"  # WebSocket Server (Host:Container)
+      - "8090:8090"  # WebSocket Bridge HTTP API (Host:Container)
 
     # Environment variables (override with .env file)
     environment:
