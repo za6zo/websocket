@@ -67,7 +67,8 @@ services:
 networks:
   za6zo-network:
     driver: bridge
-    name: za6zo-network
+    # Removed fixed network name to avoid conflicts
+    # Docker will create project-specific network name
 
 # Optional: Volumes for persistent data (if needed)
 # volumes:
