@@ -2,7 +2,7 @@ services:
   websocket:
     build:
       context: .
-      dockerfile: Dockerfile
+      dockerfile: Dockerfile.websocket
     # Removed fixed container_name to allow docker-compose to generate unique names
     # This prevents conflicts during redeployment
     image: za6zo-websocket:latest
