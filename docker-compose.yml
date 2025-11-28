@@ -6,6 +6,9 @@ services:
     container_name: za6zo-websocket
     image: za6zo-websocket:latest
 
+    # Force recreate on conflicts
+    pull_policy: build
+
     # Port mapping
     ports:
       - "8080:8080"  # WebSocket Server
