@@ -6,7 +6,7 @@ const fs = require('fs');
 const http = require('http');
 const express = require('express');
 const fetch = require('node-fetch');
-const pushNotificationService = require('../za6zo_admin/lib/services/push-notification');
+const pushNotificationService = require('./push-notification');
 const jwt = require('jsonwebtoken');
 
 const WS_PORT = process.env.WS_PORT || 8080;
