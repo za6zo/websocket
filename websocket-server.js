@@ -892,6 +892,12 @@ function handleMessage(userId, data) {
       notifyTripCancelled(payload);
       break;
 
+    case 'subscription_status':
+      // Notify passenger about subscription request status (accepted/rejected/counter)
+      console.log('📢 Processing subscription status notification:', payload);
+      notifyPassengerAboutSubscriptionStatus(payload);
+      break;
+
     default:
       console.log('Unknown message type:', type);
   }
@@ -3319,8 +3325,12 @@ function notifyPassengerAboutSubscriptionStatus(payload) {
   const { passengerId, requestId, status, driverName, finalPrice, counterPrice } = payload;
 
   console.log(`📢 [Subscription] Notifying passenger ${passengerId} - status: ${status}`);
+  console.log(`🔍 [Subscription] Full payload:`, JSON.stringify(payload, null, 2));
 
   const passengerUserId = riderIdToUserId.get(parseInt(passengerId)) || passengerId;
+  console.log(`🔍 [Subscription] Mapped passengerId ${passengerId} → userId ${passengerUserId}`);
+  console.log(`🔍 [Subscription] Is passenger connected?`, connections.has(passengerUserId));
+  console.log(`🔍 [Subscription] All connections:`, Array.from(connections.keys()));
 
   const notification = {
     type: status === 'accepted' ? 'subscription_request_accepted' :
@@ -3335,8 +3345,12 @@ function notifyPassengerAboutSubscriptionStatus(payload) {
     }
   };
 
+  console.log(`📤 [Subscription] Sending notification:`, JSON.stringify(notification, null, 2));
+
   if (sendToUser(passengerUserId, notification)) {
     console.log(`✅ Notified passenger ${passengerId} about subscription ${status}`);
+  } else {
+    console.log(`❌ Failed to notify passenger ${passengerId} - not connected or send failed`);
   }
 }
 
