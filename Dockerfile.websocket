@@ -31,6 +31,7 @@ RUN npm install --only=production && \
 COPY websocket-server.js ./
 COPY websocket-bridge.js ./
 COPY start-services.js ./
+COPY push-notification.js ./
 
 # Create directory for push notification service (if needed)
 RUN mkdir -p lib/services
