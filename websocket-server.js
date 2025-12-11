@@ -302,6 +302,10 @@ app.post('/notify', (req, res) => {
     // Notify about city trip status update
     notifyCityTripUpdate(payload);
     res.json({ success: true, message: 'City trip update notification sent' });
+  } else if (type === 'driver_verified') {
+    // Notify driver about verification status change
+    notifyDriverVerified(payload);
+    res.json({ success: true, message: 'Driver verification notification sent' });
   } else {
     res.status(400).json({ error: 'Unknown notification type: ' + type });
   }
@@ -3665,6 +3669,104 @@ function notifyCityTripCompleted(payload) {
 }
 
 // ==================== END CITY-TO-CITY NOTIFICATION FUNCTIONS ====================
+
+// ==================== DRIVER VERIFICATION NOTIFICATION FUNCTION ====================
+
+/**
+ * Notify driver about verification status change
+ * @param {Object} payload - Contains driverId, userId, verificationStatus, message
+ */
+function notifyDriverVerified(payload) {
+  const { driverId, userId, verificationStatus, message, targetDriverId } = payload;
+
+  // Use targetDriverId if provided, otherwise use driverId
+  const targetId = targetDriverId || driverId;
+
+  console.log(`✅ [Driver Verified] Notifying driver ${targetId} about verification status: ${verificationStatus}`);
+  console.log(`📋 [Driver Verified] Payload:`, JSON.stringify(payload, null, 2));
+
+  // Prepare notification message
+  const notification = {
+    type: 'driver_verified',
+    payload: {
+      driverId: targetId,
+      userId,
+      verificationStatus,
+      message: message || 'Your driver account has been verified!',
+      timestamp: new Date().toISOString()
+    }
+  };
+
+  // Try multiple methods to find and notify the driver
+  let driverNotified = false;
+
+  // Method 1: Try driverId mapping (driverId -> userId)
+  const driverUserId = driverIdToUserId.get(parseInt(targetId));
+  if (driverUserId) {
+    console.log(`📍 [Driver Verified] Found driver mapping: ${targetId} → ${driverUserId}`);
+    const sent = sendToUser(driverUserId, notification);
+    if (sent) {
+      console.log(`✅ [Driver Verified] Notified driver ${targetId} (user ${driverUserId})`);
+      driverNotified = true;
+    }
+  }
+
+  // Method 2: Try direct driverId as userId
+  if (!driverNotified && targetId) {
+    const sent = sendToUser(targetId.toString(), notification);
+    if (sent) {
+      console.log(`✅ [Driver Verified] Notified driver ${targetId} directly`);
+      driverNotified = true;
+    }
+  }
+
+  // Method 3: Try with provided userId
+  if (!driverNotified && userId) {
+    const sent = sendToUser(userId.toString(), notification);
+    if (sent) {
+      console.log(`✅ [Driver Verified] Notified driver via userId: ${userId}`);
+      driverNotified = true;
+    }
+  }
+
+  // Method 4: Search all connections for this driver
+  if (!driverNotified) {
+    console.log(`🔍 [Driver Verified] Searching all connections for driver ${targetId}...`);
+    connections.forEach((conn, connectionUserId) => {
+      if (!driverNotified && conn.role === 'driver') {
+        if (conn.driverId === parseInt(targetId) ||
+            connectionUserId === targetId.toString() ||
+            (userId && connectionUserId === userId.toString())) {
+          const sent = sendToUser(connectionUserId, notification);
+          if (sent) {
+            console.log(`✅ [Driver Verified] Found and notified driver via connection search: ${connectionUserId}`);
+            driverNotified = true;
+          }
+        }
+      }
+    });
+  }
+
+  if (!driverNotified) {
+    console.log(`⚠️ [Driver Verified] Could not find driver ${targetId} in any connection!`);
+    console.log(`📊 [Driver Verified] Current driver mappings:`, Array.from(driverIdToUserId.entries()));
+    console.log(`📊 [Driver Verified] Current connections:`, Array.from(connections.keys()));
+
+    // Log all driver connections for debugging
+    console.log(`📊 [Driver Verified] All driver connections:`);
+    connections.forEach((conn, connectionUserId) => {
+      if (conn.role === 'driver') {
+        console.log(`   - User ${connectionUserId}: driverId=${conn.driverId}, wsState=${conn.ws.readyState}`);
+      }
+    });
+  } else {
+    console.log(`✅ [Driver Verified] Successfully notified driver ${targetId}`);
+  }
+
+  return driverNotified;
+}
+
+// ==================== END DRIVER VERIFICATION NOTIFICATION FUNCTION ====================
 
 // Add these handlers to the handleMessage function's switch statement
 // Update the switch statement in handleMessage to include these cases:
