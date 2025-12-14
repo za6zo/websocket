@@ -163,23 +163,42 @@ function heartbeatMonitor() {
   }
 }
 
-// Create standalone WebSocket server
+// Create Express app for HTTP endpoints
+const app = express();
+app.use(express.json());
+
+// Add CORS headers for ngrok
+app.use((req, res, next) => {
+  res.header('Access-Control-Allow-Origin', '*');
+  res.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  res.header('Access-Control-Allow-Headers', 'Content-Type, ngrok-skip-browser-warning');
+  if (req.method === 'OPTIONS') {
+    return res.sendStatus(200);
+  }
+  next();
+});
+
+// Create HTTP server that will handle both HTTP requests and WebSocket upgrades
+const server = http.createServer(app);
+
+// Create WebSocket server attached to HTTP server (same port for both)
 const wss = new WebSocket.Server({
-  port: WS_PORT,
+  server,
   perMessageDeflate: false
 });
 
-console.log(`WebSocket server running on port ${WS_PORT}`);
+// Start the combined HTTP + WebSocket server
+server.listen(WS_PORT, () => {
+  console.log(`🚀 Combined HTTP + WebSocket server running on port ${WS_PORT}`);
+  console.log(`   - WebSocket: ws://localhost:${WS_PORT}`);
+  console.log(`   - HTTP /notify: http://localhost:${WS_PORT}/notify`);
+});
 
 // ✅ Start heartbeat monitor
 const heartbeatInterval = setInterval(heartbeatMonitor, HEARTBEAT_INTERVAL);
 console.log(`💓 Heartbeat monitor started (checking every ${HEARTBEAT_INTERVAL/1000}s, timeout: ${CONNECTION_TIMEOUT/1000}s)`);
 
-// Create HTTP server for receiving notifications from backend
-const app = express();
-app.use(express.json());
-
-// HTTP endpoint for backend to send notifications
+// HTTP endpoint for backend to send notifications (now on same port as WebSocket)
 app.post('/notify', (req, res) => {
   const { type, payload } = req.body;
   // console.log(`📨 HTTP Notification received: ${type}`);
@@ -311,9 +330,8 @@ app.post('/notify', (req, res) => {
   }
 });
 
-app.listen(HTTP_PORT, () => {
-  console.log(`HTTP notification server running on port ${HTTP_PORT}`);
-});
+// Note: HTTP /notify endpoint now runs on same port as WebSocket (WS_PORT)
+// No separate HTTP_PORT listener needed - using combined server above
 
 wss.on('connection', (ws, req) => {
   // ✅ RATE LIMITING: Check connection rate limit by IP
