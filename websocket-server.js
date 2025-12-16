@@ -61,6 +61,110 @@ setInterval(() => {
   }
 }, 5 * 60 * 1000);
 
+// ✅ TRIP DESTINATION CACHE: Store pickup/dropoff locations for ETA calculation
+const tripDestinations = new Map(); // tripId -> { pickup, dropoff, status }
+
+/**
+ * Calculate distance between two coordinates using Haversine formula
+ * @param {number} lat1 - Latitude of point 1
+ * @param {number} lon1 - Longitude of point 1
+ * @param {number} lat2 - Latitude of point 2
+ * @param {number} lon2 - Longitude of point 2
+ * @returns {number} Distance in kilometers
+ */
+function calculateDistance(lat1, lon1, lat2, lon2) {
+  const R = 6371; // Earth's radius in kilometers
+  const dLat = (lat2 - lat1) * Math.PI / 180;
+  const dLon = (lon2 - lon1) * Math.PI / 180;
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+    Math.sin(dLon / 2) * Math.sin(dLon / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return R * c;
+}
+
+/**
+ * Calculate ETA in minutes based on distance and speed
+ * @param {object} driverLocation - Driver's current location { latitude, longitude, speed }
+ * @param {object} destination - Destination { latitude, longitude }
+ * @returns {number} ETA in minutes
+ */
+function calculateETA(driverLocation, destination) {
+  if (!driverLocation || !destination) return null;
+
+  const distance = calculateDistance(
+    driverLocation.latitude,
+    driverLocation.longitude,
+    destination.latitude,
+    destination.longitude
+  );
+
+  // Use driver's current speed if available and reasonable, otherwise use default
+  // Speed is typically in m/s from GPS, convert to km/h
+  let speedKmh = 25; // Default urban speed in km/h
+
+  if (driverLocation.speed && driverLocation.speed > 0) {
+    // Convert m/s to km/h
+    speedKmh = driverLocation.speed * 3.6;
+    // Clamp to reasonable values (5-80 km/h for urban driving)
+    speedKmh = Math.max(5, Math.min(80, speedKmh));
+  }
+
+  // Calculate ETA in minutes
+  const etaMinutes = (distance / speedKmh) * 60;
+
+  // Add buffer for traffic/stops (20% extra time)
+  const etaWithBuffer = etaMinutes * 1.2;
+
+  return Math.ceil(etaWithBuffer);
+}
+
+/**
+ * Store trip destination for ETA calculations
+ * @param {string} tripId - Trip ID
+ * @param {object} pickup - Pickup location { latitude, longitude }
+ * @param {object} dropoff - Dropoff location { latitude, longitude }
+ */
+function setTripDestination(tripId, pickup, dropoff) {
+  tripDestinations.set(tripId, {
+    pickup,
+    dropoff,
+    status: 'ACCEPTED', // Default status
+    updatedAt: new Date().toISOString()
+  });
+  console.log(`📍 Stored destinations for trip ${tripId}`);
+}
+
+/**
+ * Update trip status (affects which destination is used for ETA)
+ * @param {string} tripId - Trip ID
+ * @param {string} status - New status (ACCEPTED, IN_PROGRESS, etc.)
+ */
+function updateTripStatus(tripId, status) {
+  const trip = tripDestinations.get(tripId);
+  if (trip) {
+    trip.status = status;
+    trip.updatedAt = new Date().toISOString();
+  }
+}
+
+/**
+ * Get the appropriate destination for ETA calculation based on trip status
+ * @param {string} tripId - Trip ID
+ * @returns {object|null} Destination { latitude, longitude }
+ */
+function getTripDestination(tripId) {
+  const trip = tripDestinations.get(tripId);
+  if (!trip) return null;
+
+  // If trip is in progress, use dropoff. Otherwise use pickup.
+  if (trip.status === 'IN_PROGRESS') {
+    return trip.dropoff;
+  }
+  return trip.pickup;
+}
+
 /**
  * Check if connection attempt should be rate limited
  * @param {string} ip - Client IP address
@@ -1047,6 +1151,14 @@ function notifyTripStarted(driverId, payload) {
     pickupLocation: !!pickupLocation,
     dropoffLocation: !!dropoffLocation
   });
+
+  // ✅ Update trip status for ETA calculation (now targets dropoff)
+  updateTripStatus(tripId, 'IN_PROGRESS');
+
+  // ✅ Store/update destinations if provided
+  if (pickupLocation && dropoffLocation) {
+    setTripDestination(tripId, pickupLocation, dropoffLocation);
+  }
 
   const tripPayload = {
     tripId,
@@ -2306,15 +2418,34 @@ function handleDriverBid(driverId, payload) {
 
 // Handle rider accepting a bid
 function handleBidAcceptance(riderId, payload) {
-  const { tripRequestId, bidId, driverId, bidAmount } = payload;
-  
+  const { tripRequestId, bidId, driverId, bidAmount, tripId } = payload;
+
   console.log(`✅ Rider ${riderId} accepted bid ${bidId} from driver ${driverId}`);
-  
+
+  // ✅ FIX: Immediately join both users to trip room for real-time tracking
+  // This ensures location updates work from the start
+  const effectiveTripId = tripId || tripRequestId;
+  if (effectiveTripId) {
+    console.log(`🚗 Auto-joining driver ${driverId} and rider ${riderId} to trip ${effectiveTripId}`);
+    joinTrip(driverId, effectiveTripId);
+    joinTrip(riderId, effectiveTripId);
+
+    // ✅ Auto-start live tracking session
+    liveTrackingSessions.set(effectiveTripId, {
+      driverId,
+      riderId,
+      startTime: new Date().toISOString(),
+      isActive: true
+    });
+    console.log(`🔴 Auto-started live tracking for trip ${effectiveTripId}`);
+  }
+
   // Notify the driver about bid acceptance
   const acceptanceNotification = {
     type: 'bid_accepted',
     payload: {
       tripRequestId,
+      tripId: effectiveTripId,
       bidId,
       bidAmount,
       riderId,
@@ -2322,9 +2453,9 @@ function handleBidAcceptance(riderId, payload) {
       timestamp: new Date().toISOString()
     }
   };
-  
+
   sendToUser(driverId, acceptanceNotification);
-  
+
   // Notify other drivers that the trip is no longer available
   const tripUnavailableNotification = {
     type: 'trip_unavailable',
@@ -2334,13 +2465,13 @@ function handleBidAcceptance(riderId, payload) {
       timestamp: new Date().toISOString()
     }
   };
-  
+
   connections.forEach((conn, userId) => {
     if (conn.role === 'driver' && userId !== driverId) {
       sendToUser(userId, tripUnavailableNotification);
     }
   });
-  
+
   console.log(`📱 Notified all drivers about trip ${tripRequestId} being taken`);
 }
 
@@ -2464,6 +2595,30 @@ function broadcastLiveLocation(userId, payload) {
     timestamp: new Date().toISOString()
   };
 
+  // ✅ Calculate ETA if this is a driver location update
+  let eta = null;
+  if (userConn.role === 'driver') {
+    const destination = getTripDestination(tripId);
+    if (destination) {
+      eta = calculateETA(userConn.location, destination);
+    }
+  }
+
+  // ✅ Store pickup/dropoff locations if provided in payload
+  if (payload.pickupLocation && payload.dropoffLocation) {
+    setTripDestination(tripId, payload.pickupLocation, payload.dropoffLocation);
+  }
+
+  // Build the location payload with ETA
+  const locationPayload = {
+    tripId: tripId,
+    location: userConn.location,
+    userId: userId,
+    role: userConn.role,
+    eta: eta, // ✅ Include ETA in the payload
+    timestamp: new Date().toISOString()
+  };
+
   // Get trip users
   const tripUsers = tripConnections.get(tripId);
   if (!tripUsers || tripUsers.size === 0) {
@@ -2474,24 +2629,13 @@ function broadcastLiveLocation(userId, payload) {
         // Send both event types for compatibility
         sendToUser(uid, {
           type: userConn.role === 'driver' ? 'driver_live_location' : 'rider_live_location',
-          payload: {
-            tripId: tripId,
-            location: userConn.location,
-            userId: userId,
-            role: userConn.role
-          }
+          payload: locationPayload
         });
         // Also send generic user_location event for compatibility
         sendToUser(uid, {
           type: 'user_location',
-          payload: {
-            tripId: tripId,
-            location: userConn.location,
-            userId: userId,
-            role: userConn.role
-          }
+          payload: locationPayload
         });
-        console.log(`📍 Sent location to user ${uid} (both formats)`);
       }
     });
     return;
@@ -2503,23 +2647,23 @@ function broadcastLiveLocation(userId, payload) {
       // Send both event types for compatibility
       sendToUser(otherUserId, {
         type: userConn.role === 'driver' ? 'driver_live_location' : 'rider_live_location',
-        payload: {
-          tripId: userConn.tripId,
-          location: userConn.location,
-          userId: userId,
-          role: userConn.role
-        }
+        payload: locationPayload
       });
       // Also send generic user_location event for compatibility
       sendToUser(otherUserId, {
         type: 'user_location',
-        payload: {
-          tripId: userConn.tripId,
-          location: userConn.location,
-          userId: userId,
-          role: userConn.role
-        }
+        payload: locationPayload
       });
+    }
+  });
+
+  // ✅ Send acknowledgment back to sender
+  sendToUser(userId, {
+    type: 'location_ack',
+    payload: {
+      tripId,
+      timestamp: userConn.location.timestamp,
+      eta: eta
     }
   });
 }
