@@ -1585,6 +1585,9 @@ async function sendPushNotificationFallback(userId, message) {
 
     // Map message types to push notifications
     switch (type) {
+      // ============================================
+      // REGULAR RIDE NOTIFICATIONS
+      // ============================================
       case 'new_trip_request':
         await pushNotificationService.notifyNewTripRequest(expoPushToken, payload);
         console.log(`📲 Sent push notification (new_trip_request) to ${userId}`);
@@ -1619,6 +1622,177 @@ async function sendPushNotificationFallback(userId, message) {
       case 'new_bid':
         await pushNotificationService.notifyNewBid(expoPushToken, payload);
         console.log(`📲 Sent push notification (new_bid) to ${userId}`);
+        break;
+
+      // ============================================
+      // SHARED RIDE NOTIFICATIONS
+      // ============================================
+      case 'driver_accepted_request':
+      case 'shared_ride_accepted':
+        await pushNotificationService.notifySharedRideAccepted(expoPushToken, payload);
+        console.log(`📲 Sent push notification (shared_ride_accepted) to ${userId}`);
+        break;
+
+      case 'driver_rejected_request':
+      case 'passenger_request_rejected':
+      case 'shared_ride_rejected':
+        await pushNotificationService.notifySharedRideRejected(expoPushToken, payload);
+        console.log(`📲 Sent push notification (shared_ride_rejected) to ${userId}`);
+        break;
+
+      case 'shared_ride_route_updated':
+        await pushNotificationService.notifySharedRideRouteUpdated(expoPushToken, payload);
+        console.log(`📲 Sent push notification (shared_ride_route_updated) to ${userId}`);
+        break;
+
+      case 'other_passenger_joined':
+        await pushNotificationService.notifyOtherPassengerJoined(expoPushToken, payload);
+        console.log(`📲 Sent push notification (other_passenger_joined) to ${userId}`);
+        break;
+
+      case 'route_cancelled':
+        await pushNotificationService.notifyRouteCancelled(expoPushToken, payload);
+        console.log(`📲 Sent push notification (route_cancelled) to ${userId}`);
+        break;
+
+      case 'passenger_ride_request':
+        await pushNotificationService.notifyPassengerRideRequest(expoPushToken, payload);
+        console.log(`📲 Sent push notification (passenger_ride_request) to ${userId}`);
+        break;
+
+      case 'passenger_request_cancelled':
+        await pushNotificationService.notifyPassengerRequestCancelled(expoPushToken, payload);
+        console.log(`📲 Sent push notification (passenger_request_cancelled) to ${userId}`);
+        break;
+
+      // ============================================
+      // CITY-TO-CITY NOTIFICATIONS
+      // ============================================
+      case 'city_trip_request':
+        await pushNotificationService.notifyCityTripRequest(expoPushToken, payload);
+        console.log(`📲 Sent push notification (city_trip_request) to ${userId}`);
+        break;
+
+      case 'city_trip_direct_request':
+        await pushNotificationService.notifyCityTripDirectRequest(expoPushToken, payload);
+        console.log(`📲 Sent push notification (city_trip_direct_request) to ${userId}`);
+        break;
+
+      case 'city_trip_accepted':
+        await pushNotificationService.notifyCityTripAccepted(expoPushToken, payload);
+        console.log(`📲 Sent push notification (city_trip_accepted) to ${userId}`);
+        break;
+
+      case 'city_trip_rejected':
+        await pushNotificationService.notifyCityTripRejected(expoPushToken, payload);
+        console.log(`📲 Sent push notification (city_trip_rejected) to ${userId}`);
+        break;
+
+      case 'city_trip_counter_offer':
+        await pushNotificationService.notifyCityTripCounterOffer(expoPushToken, payload);
+        console.log(`📲 Sent push notification (city_trip_counter_offer) to ${userId}`);
+        break;
+
+      case 'city_trip_price_agreed':
+        await pushNotificationService.notifyCityTripPriceAgreed(expoPushToken, payload);
+        console.log(`📲 Sent push notification (city_trip_price_agreed) to ${userId}`);
+        break;
+
+      case 'city_trip_started':
+        await pushNotificationService.notifyCityTripStarted(expoPushToken, payload);
+        console.log(`📲 Sent push notification (city_trip_started) to ${userId}`);
+        break;
+
+      case 'city_trip_completed':
+        await pushNotificationService.notifyCityTripCompleted(expoPushToken, payload);
+        console.log(`📲 Sent push notification (city_trip_completed) to ${userId}`);
+        break;
+
+      // ============================================
+      // SUBSCRIPTION NOTIFICATIONS
+      // ============================================
+      case 'subscription_request':
+        await pushNotificationService.notifySubscriptionRequest(expoPushToken, payload);
+        console.log(`📲 Sent push notification (subscription_request) to ${userId}`);
+        break;
+
+      case 'subscription_status':
+        await pushNotificationService.notifySubscriptionStatus(expoPushToken, payload);
+        console.log(`📲 Sent push notification (subscription_status) to ${userId}`);
+        break;
+
+      case 'subscription_confirmed':
+        await pushNotificationService.notifySubscriptionStatus(expoPushToken, { ...payload, status: 'ACCEPTED' });
+        console.log(`📲 Sent push notification (subscription_confirmed) to ${userId}`);
+        break;
+
+      case 'subscription_trip_update':
+        await pushNotificationService.notifySubscriptionTripUpdate(expoPushToken, payload);
+        console.log(`📲 Sent push notification (subscription_trip_update) to ${userId}`);
+        break;
+
+      case 'subscription_trip_reminder':
+        await pushNotificationService.notifySubscriptionTripReminder(expoPushToken, payload);
+        console.log(`📲 Sent push notification (subscription_trip_reminder) to ${userId}`);
+        break;
+
+      // ============================================
+      // DRIVER NOTIFICATIONS
+      // ============================================
+      case 'driver_verified':
+        await pushNotificationService.notifyDriverVerified(expoPushToken, payload);
+        console.log(`📲 Sent push notification (driver_verified) to ${userId}`);
+        break;
+
+      // ============================================
+      // SPECIAL RIDE NOTIFICATIONS
+      // ============================================
+      case 'special_ride_available':
+        await pushNotificationService.notifySpecialRideAvailable(expoPushToken, payload);
+        console.log(`📲 Sent push notification (special_ride_available) to ${userId}`);
+        break;
+
+      case 'special_ride_confirmed':
+        await pushNotificationService.notifySpecialRideConfirmed(expoPushToken, payload);
+        console.log(`📲 Sent push notification (special_ride_confirmed) to ${userId}`);
+        break;
+
+      case 'special_ride_reminder':
+        await pushNotificationService.notifySpecialRideReminder(expoPushToken, payload);
+        console.log(`📲 Sent push notification (special_ride_reminder) to ${userId}`);
+        break;
+
+      case 'special_ride_cancelled':
+        await pushNotificationService.notifySpecialRideCancelled(expoPushToken, payload);
+        console.log(`📲 Sent push notification (special_ride_cancelled) to ${userId}`);
+        break;
+
+      // ============================================
+      // PROMOTIONAL NOTIFICATIONS
+      // ============================================
+      case 'promotion':
+        await pushNotificationService.notifyPromotion(expoPushToken, payload);
+        console.log(`📲 Sent push notification (promotion) to ${userId}`);
+        break;
+
+      case 'promo_expiring':
+        await pushNotificationService.notifyPromoExpiring(expoPushToken, payload);
+        console.log(`📲 Sent push notification (promo_expiring) to ${userId}`);
+        break;
+
+      case 'referral_bonus':
+        await pushNotificationService.notifyReferralBonus(expoPushToken, payload);
+        console.log(`📲 Sent push notification (referral_bonus) to ${userId}`);
+        break;
+
+      case 'loyalty_reward':
+        await pushNotificationService.notifyLoyaltyReward(expoPushToken, payload);
+        console.log(`📲 Sent push notification (loyalty_reward) to ${userId}`);
+        break;
+
+      case 'welcome_offer':
+        await pushNotificationService.notifyWelcomeOffer(expoPushToken, payload);
+        console.log(`📲 Sent push notification (welcome_offer) to ${userId}`);
         break;
 
       default:
