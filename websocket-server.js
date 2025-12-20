@@ -2009,12 +2009,18 @@ function broadcastToDrivers(data) {
 
       // If targetDriverIds provided and not empty, only send to those drivers
       if (targetDriverIds && targetDriverIds.length > 0) {
-        // Check if this driver is in the target list
-        const isTargetDriver = targetDriverIds.includes(userId) ||
-                              targetDriverIds.includes(userConn.driverId);
+        // Normalize targetDriverIds to strings for comparison
+        const targetDriverIdsStr = targetDriverIds.map(id => String(id));
+
+        // Check if this driver is in the target list (compare as strings to avoid type mismatch)
+        const userIdStr = String(userId);
+        const driverIdStr = userConn.driverId ? String(userConn.driverId) : null;
+
+        const isTargetDriver = targetDriverIdsStr.includes(userIdStr) ||
+                              (driverIdStr && targetDriverIdsStr.includes(driverIdStr));
 
         if (!isTargetDriver) {
-          console.log(`⏩ Skipping driver ${userId} - not in target list`);
+          console.log(`⏩ Skipping driver ${userId} (driverId: ${driverIdStr}) - not in target list: [${targetDriverIdsStr.join(', ')}]`);
           return;
         }
       }
@@ -2036,11 +2042,15 @@ function broadcastToDrivers(data) {
   console.log(`Broadcast sent to ${driversNotified} drivers`);
 
   if (driversNotified === 0) {
-    console.log('⚠️ No drivers were notified! Possible reasons:');
+    console.log('⚠️ No drivers were notified! Debug info:');
+    console.log(`  - Total connections: ${totalConnections}`);
+    console.log(`  - Driver connections: ${driverConnections}`);
+    console.log(`  - Target driver IDs: ${targetDriverIds ? `[${targetDriverIds.map(id => String(id)).join(', ')}]` : 'ALL'}`);
+    console.log('  Possible reasons:');
     console.log('  1. No targeted drivers are connected to WebSocket');
     console.log('  2. Drivers connected but not identified as "driver" role');
     console.log('  3. Driver WebSocket connections are not in OPEN state');
-    console.log('  4. Target driver IDs do not match connected drivers');
+    console.log('  4. Target driver IDs do not match connected drivers (check ID format)');
   }
 }
 
