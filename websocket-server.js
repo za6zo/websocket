@@ -941,6 +941,19 @@ function handleMessage(userId, data) {
       // Rider sharing location with driver
       broadcastRiderLocation(userId, payload);
       break;
+
+    case 'driver_accepted_request':
+      // Driver accepted passenger's shared ride request - notify passenger
+      console.log('✅ Processing driver_accepted_request from driver client');
+      console.log('📥 Payload:', JSON.stringify(payload, null, 2));
+      notifyPassengerAboutAcceptance(payload);
+      break;
+
+    case 'driver_rejected_request':
+      // Driver rejected passenger's shared ride request - notify passenger
+      console.log('❌ Processing driver_rejected_request from driver client');
+      notifyPassengerAboutRejection(payload);
+      break;
     
     case 'place_bid':
       // Driver places a bid on a trip request
@@ -3148,6 +3161,7 @@ function notifyDriverAboutPassengerRequest(payload) {
     requestId,
     routeId,
     driverId,
+    driverUserId, // Driver's user ID for websocket lookup
     passengerId,
     passengerInfo,
     pickupLocation,
@@ -3158,7 +3172,7 @@ function notifyDriverAboutPassengerRequest(payload) {
     timestamp
   } = payload;
 
-  console.log(`🚕 New passenger request for driver ${driverId} on route ${routeId}`);
+  console.log(`🚕 New passenger request for driver ${driverId} (userId: ${driverUserId}) on route ${routeId}`);
   console.log(`   Passenger: ${passengerInfo.name} (${passengerId})`);
   console.log(`   Pickup: ${pickupLocation.address}`);
   console.log(`   Dropoff: ${dropoffLocation.address}`);
@@ -3184,18 +3198,30 @@ function notifyDriverAboutPassengerRequest(payload) {
   // Try multiple methods to find and notify the driver
   let driverNotified = false;
 
-  // Method 1: Try driverId mapping
-  const driverUserId = driverIdToUserId.get(driverId);
+  // Method 1: Try driverUserId from payload directly (most reliable)
   if (driverUserId) {
-    console.log(`📍 Found driver mapping: ${driverId} → ${driverUserId}`);
+    console.log(`📍 Trying driverUserId from payload: ${driverUserId}`);
     const sent = sendToUser(driverUserId, notification);
     if (sent) {
-      console.log(`✅ Notified driver ${driverId} (user ${driverUserId}) about passenger request`);
+      console.log(`✅ Notified driver via driverUserId ${driverUserId} about passenger request`);
       driverNotified = true;
     }
   }
 
-  // Method 2: Try direct driverId as userId
+  // Method 2: Try driverId mapping
+  if (!driverNotified) {
+    const mappedUserId = driverIdToUserId.get(driverId);
+    if (mappedUserId) {
+      console.log(`📍 Found driver mapping: ${driverId} → ${mappedUserId}`);
+      const sent = sendToUser(mappedUserId, notification);
+      if (sent) {
+        console.log(`✅ Notified driver ${driverId} (user ${mappedUserId}) about passenger request`);
+        driverNotified = true;
+      }
+    }
+  }
+
+  // Method 3: Try direct driverId as userId
   if (!driverNotified) {
     const sent = sendToUser(driverId, notification);
     if (sent) {
@@ -3204,15 +3230,15 @@ function notifyDriverAboutPassengerRequest(payload) {
     }
   }
 
-  // Method 3: Search all connections for this driver
+  // Method 4: Search all connections for this driver
   if (!driverNotified) {
-    console.log(`🔍 Searching all connections for driver ${driverId}...`);
-    connections.forEach((conn, userId) => {
+    console.log(`🔍 Searching all connections for driver ${driverId} or userId ${driverUserId}...`);
+    connections.forEach((conn, connUserId) => {
       if (!driverNotified && conn.role === 'driver') {
-        if (conn.driverId === driverId || userId === driverId) {
-          const sent = sendToUser(userId, notification);
+        if (conn.driverId === driverId || connUserId === driverId || connUserId === driverUserId || String(connUserId) === String(driverUserId)) {
+          const sent = sendToUser(connUserId, notification);
           if (sent) {
-            console.log(`✅ Found and notified driver via connection search: ${userId}`);
+            console.log(`✅ Found and notified driver via connection search: ${connUserId}`);
             driverNotified = true;
           }
         }
@@ -3221,7 +3247,7 @@ function notifyDriverAboutPassengerRequest(payload) {
   }
 
   if (!driverNotified) {
-    console.log(`⚠️ Could not find driver ${driverId} in any connection!`);
+    console.log(`⚠️ Could not find driver ${driverId} (userId: ${driverUserId}) in any connection!`);
     console.log(`📊 Current driver mappings:`, Array.from(driverIdToUserId.entries()));
     console.log(`📊 Current connections:`, Array.from(connections.keys()));
   }
