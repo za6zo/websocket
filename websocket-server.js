@@ -460,6 +460,8 @@ wss.on('connection', (ws, req) => {
 
   // Verify JWT token to get userId (or use raw token for special cases like 'api-server')
   let userId = token;
+  let tokenNeedsRefresh = false;
+
   if (token !== 'api-server' && token.includes('.')) {
     // This looks like a JWT token, verify it
     try {
@@ -508,11 +510,31 @@ wss.on('connection', (ws, req) => {
         return;
       }
 
-      // Check expiration (jwt.verify already checks this, but adding explicit check for clarity)
+      // Check expiration with grace period (7 days)
+      // For WebSocket, we allow expired tokens within grace period but notify the client to refresh
       if (decoded.exp && decoded.exp < Math.floor(Date.now() / 1000)) {
-        console.error('❌ JWT verification failed: Token expired');
-        ws.close(1008, 'Token expired');
-        return;
+        const now = Math.floor(Date.now() / 1000);
+        const expiredFor = now - decoded.exp;
+        const GRACE_PERIOD = 7 * 24 * 60 * 60; // 7 days in seconds
+
+        if (expiredFor > GRACE_PERIOD) {
+          console.error(`❌ JWT verification failed: Token expired ${Math.floor(expiredFor / 86400)} days ago (beyond grace period)`);
+          ws.close(1008, 'Token expired - please login again');
+          return;
+        } else {
+          console.warn(`⚠️ Token expired ${Math.floor(expiredFor / 3600)}h ago but within grace period - allowing connection`);
+          tokenNeedsRefresh = true;
+        }
+      }
+
+      // Also check if token is about to expire (within 1 day)
+      if (decoded.exp) {
+        const now = Math.floor(Date.now() / 1000);
+        const expiresIn = decoded.exp - now;
+        if (expiresIn > 0 && expiresIn < 86400) { // Less than 1 day
+          console.log(`⚠️ Token expires soon (${Math.floor(expiresIn / 3600)}h) - recommending refresh`);
+          tokenNeedsRefresh = true;
+        }
       }
 
       userId = String(decoded.userId);
@@ -542,11 +564,21 @@ wss.on('connection', (ws, req) => {
 
   // ✅ Store connection with heartbeat timestamp
   connections.set(userId, { ws, role: null, tripId: null, location: null, lastHeartbeat: Date.now() });
-  
+
   // Special handling for API server connections
   if (userId === 'api-server') {
     console.log('API Server connected for notifications');
     connections.get(userId).role = 'api-server';
+  }
+
+  // If token needs refresh, notify the client
+  if (tokenNeedsRefresh) {
+    ws.send(JSON.stringify({
+      type: 'token_refresh_needed',
+      message: 'Your authentication token is expired or expiring soon. Please refresh it.',
+      timestamp: new Date().toISOString()
+    }));
+    console.log(`📢 Sent token_refresh_needed to user ${userId}`);
   }
 
   // Handle messages
