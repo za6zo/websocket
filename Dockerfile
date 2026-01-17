@@ -8,11 +8,6 @@ FROM node:18-alpine
 LABEL maintainer="Za6Zo Team"
 LABEL description="Za6Zo WebSocket Server and Bridge for Real-Time Communications"
 
-# Install system dependencies
-RUN apk add --no-cache \
-    curl \
-    && rm -rf /var/cache/apk/*
-
 # Create app directory
 WORKDIR /app
 
@@ -52,9 +47,9 @@ ENV NODE_ENV=production
 ENV WS_PORT=8080
 ENV HTTP_PORT=8090
 
-# Health check on bridge HTTP endpoint
+# Health check on bridge HTTP endpoint (using wget which is built into alpine)
 HEALTHCHECK --interval=30s --timeout=10s --start-period=20s --retries=3 \
-  CMD curl -f http://localhost:8090/health || exit 1
+  CMD wget --no-verbose --tries=1 --spider http://localhost:8090/health || exit 1
 
 # Start both services
 CMD ["node", "start-services.js"]
