@@ -13,14 +13,17 @@ const WS_PORT = process.env.WS_PORT || 8080;
 const HTTP_PORT = process.env.HTTP_PORT || 8090;
 const API_URL = process.env.API_URL || 'http://localhost:3000';
 const JWT_SECRET = process.env.JWT_SECRET || 'dev-secret-change-in-production-12345678';
+const NOTIFY_API_KEY = process.env.NOTIFY_API_KEY || JWT_SECRET; // Use JWT_SECRET as fallback for API key
 
 
 
 // WebSocket connection management
-const connections = new Map(); // userId -> { ws, role, tripId, location, lastHeartbeat }
+const connections = new Map(); // oderId -> { ws, role, tripId, location, lastHeartbeat }
+const userConnections = new Map(); // userId -> Set of connectionIds (for tracking multiple connections)
 const tripConnections = new Map(); // tripId -> Set of userIds
 const driverIdToUserId = new Map(); // driverId -> userId mapping for notifications
 const riderIdToUserId = new Map(); // riderId -> userId mapping for notifications
+let connectionIdCounter = 0; // For generating unique connection IDs
 
 // ✅ RATE LIMITING: Track connection attempts and message rates
 const connectionAttempts = new Map(); // IP -> { count, firstAttempt }
@@ -40,6 +43,8 @@ const RATE_LIMITS = {
     maxMessages: 100,
     windowMs: 60 * 1000, // 1 minute
   },
+  MAX_CONNECTIONS_PER_USER: 3, // Maximum concurrent connections per user
+  MAX_TOTAL_CONNECTIONS: 10000, // Maximum total connections to server
 };
 
 // Cleanup old rate limit entries every 5 minutes
@@ -163,6 +168,94 @@ function getTripDestination(tripId) {
     return trip.dropoff;
   }
   return trip.pickup;
+}
+
+/**
+ * Check if user has reached connection limit
+ * @param {string} userId - User ID
+ * @returns {boolean} True if allowed, false if limit reached
+ */
+function checkUserConnectionLimit(userId) {
+  // Skip limit for special users
+  if (userId === 'api-server') return true;
+
+  const userConns = userConnections.get(userId);
+  if (!userConns || userConns.size < RATE_LIMITS.MAX_CONNECTIONS_PER_USER) {
+    return true;
+  }
+
+  console.log(`🚫 [WS Limit] User ${userId} has ${userConns.size} connections (max: ${RATE_LIMITS.MAX_CONNECTIONS_PER_USER})`);
+  return false;
+}
+
+/**
+ * Check if server has reached total connection limit
+ * @returns {boolean} True if allowed, false if limit reached
+ */
+function checkTotalConnectionLimit() {
+  if (connections.size >= RATE_LIMITS.MAX_TOTAL_CONNECTIONS) {
+    console.log(`🚫 [WS Limit] Server at max connections: ${connections.size}`);
+    return false;
+  }
+  return true;
+}
+
+/**
+ * Track new connection for a user
+ * @param {string} userId - User ID
+ * @param {string} connectionId - Unique connection ID
+ */
+function trackUserConnection(userId, connectionId) {
+  if (!userConnections.has(userId)) {
+    userConnections.set(userId, new Set());
+  }
+  userConnections.get(userId).add(connectionId);
+}
+
+/**
+ * Remove connection tracking for a user
+ * @param {string} userId - User ID
+ * @param {string} connectionId - Unique connection ID
+ */
+function untrackUserConnection(userId, connectionId) {
+  const userConns = userConnections.get(userId);
+  if (userConns) {
+    userConns.delete(connectionId);
+    if (userConns.size === 0) {
+      userConnections.delete(userId);
+    }
+  }
+}
+
+/**
+ * Get connection statistics
+ * @returns {object} Connection stats
+ */
+function getConnectionStats() {
+  let totalUserConnections = 0;
+  let maxConnectionsPerUser = 0;
+  let usersWithMultipleConnections = 0;
+
+  for (const [userId, conns] of userConnections.entries()) {
+    totalUserConnections += conns.size;
+    if (conns.size > maxConnectionsPerUser) {
+      maxConnectionsPerUser = conns.size;
+    }
+    if (conns.size > 1) {
+      usersWithMultipleConnections++;
+    }
+  }
+
+  return {
+    totalConnections: connections.size,
+    uniqueUsers: userConnections.size,
+    totalUserConnections,
+    maxConnectionsPerUser,
+    usersWithMultipleConnections,
+    tripConnectionGroups: tripConnections.size,
+    driverMappings: driverIdToUserId.size,
+    riderMappings: riderIdToUserId.size,
+  };
 }
 
 /**
@@ -302,8 +395,57 @@ server.listen(WS_PORT, () => {
 const heartbeatInterval = setInterval(heartbeatMonitor, HEARTBEAT_INTERVAL);
 console.log(`💓 Heartbeat monitor started (checking every ${HEARTBEAT_INTERVAL/1000}s, timeout: ${CONNECTION_TIMEOUT/1000}s)`);
 
+// Middleware to verify API key for /notify endpoint
+const verifyNotifyApiKey = (req, res, next) => {
+  const apiKey = req.headers['x-api-key'] || req.headers['authorization']?.replace('Bearer ', '');
+
+  if (!apiKey) {
+    console.warn('🚫 /notify request rejected: Missing API key');
+    return res.status(401).json({ error: 'API key required' });
+  }
+
+  if (apiKey !== NOTIFY_API_KEY) {
+    console.warn('🚫 /notify request rejected: Invalid API key');
+    return res.status(403).json({ error: 'Invalid API key' });
+  }
+
+  next();
+};
+
+// ✅ Stats endpoint for monitoring connection health
+app.get('/stats', (req, res) => {
+  const stats = getConnectionStats();
+  const rateLimitStats = {
+    connectionAttemptTracking: connectionAttempts.size,
+    messageRateLimitTracking: messageRateLimits.size,
+  };
+
+  res.json({
+    success: true,
+    timestamp: new Date().toISOString(),
+    connections: stats,
+    rateLimits: rateLimitStats,
+    config: {
+      maxConnectionsPerUser: RATE_LIMITS.MAX_CONNECTIONS_PER_USER,
+      maxTotalConnections: RATE_LIMITS.MAX_TOTAL_CONNECTIONS,
+      connectionTimeoutMs: CONNECTION_TIMEOUT,
+      heartbeatIntervalMs: HEARTBEAT_INTERVAL,
+    }
+  });
+});
+
+// ✅ Health check endpoint
+app.get('/health', (req, res) => {
+  res.json({
+    status: 'healthy',
+    service: 'websocket-server',
+    uptime: process.uptime(),
+    connections: connections.size,
+  });
+});
+
 // HTTP endpoint for backend to send notifications (now on same port as WebSocket)
-app.post('/notify', (req, res) => {
+app.post('/notify', verifyNotifyApiKey, (req, res) => {
   const { type, payload } = req.body;
   // console.log(`📨 HTTP Notification received: ${type}`);
   // console.log(`📦 Full notification payload:`, JSON.stringify({ type, payload }, null, 2));
@@ -438,6 +580,16 @@ app.post('/notify', (req, res) => {
 // No separate HTTP_PORT listener needed - using combined server above
 
 wss.on('connection', (ws, req) => {
+  // Generate unique connection ID
+  const connectionId = `conn_${++connectionIdCounter}_${Date.now()}`;
+
+  // ✅ Check total server connection limit
+  if (!checkTotalConnectionLimit()) {
+    console.log(`🚫 [WS Limit] Server at capacity, rejecting new connection`);
+    ws.close(1013, 'Server at capacity. Please try again later.');
+    return;
+  }
+
   // ✅ RATE LIMITING: Check connection rate limit by IP
   const clientIP = req.headers['x-forwarded-for']?.split(',')[0]?.trim()
     || req.headers['x-real-ip']
@@ -479,25 +631,6 @@ wss.on('connection', (ws, req) => {
           console.log('⚠️ Token missing issuer/audience claims, verifying without them (backward compatibility)');
           decoded = jwt.verify(token, JWT_SECRET);
           console.log(`✅ WebSocket connected: User ${decoded.userId} (JWT verified - legacy token)`);
-        } else if (verifyError.message.includes('invalid signature')) {
-          // ⚠️ TEMPORARY FIX: Allow connections with invalid signature (JWT_SECRET mismatch)
-          // This is for development/debugging - should be removed in production!
-          console.warn('⚠️⚠️⚠️ WARNING: JWT signature verification failed, but allowing connection for development');
-          console.warn('⚠️ This means JWT_SECRET might not match between services');
-          console.warn('⚠️ Token preview:', token.substring(0, 50) + '...');
-
-          // Try to decode without verification to get userId (INSECURE - for dev only!)
-          try {
-            decoded = jwt.decode(token);
-            if (decoded && decoded.userId) {
-              console.warn(`⚠️ Allowing user ${decoded.userId} to connect WITHOUT signature verification`);
-            } else {
-              throw new Error('Cannot decode token or missing userId');
-            }
-          } catch (decodeError) {
-            console.error('❌ Failed to decode token even without verification:', decodeError.message);
-            throw verifyError; // Fall back to original error
-          }
         } else {
           // Re-throw other errors (expired, malformed, etc.)
           throw verifyError;
@@ -540,30 +673,29 @@ wss.on('connection', (ws, req) => {
       userId = String(decoded.userId);
     } catch (error) {
       console.error('❌ JWT verification failed:', error.message);
-
-      // ⚠️ LAST RESORT: Try to extract userId from token payload without verification
-      // This is VERY INSECURE but prevents blocking users during JWT_SECRET configuration issues
-      try {
-        const decoded = jwt.decode(token);
-        if (decoded && decoded.userId) {
-          userId = String(decoded.userId);
-          console.warn(`⚠️⚠️⚠️ SECURITY WARNING: Allowing connection for user ${userId} WITHOUT JWT verification!`);
-          console.warn('⚠️ Please fix JWT_SECRET configuration to enable proper security');
-        } else {
-          ws.close(1008, 'Authentication failed: ' + error.message);
-          return;
-        }
-      } catch (decodeError) {
-        ws.close(1008, 'Authentication failed: ' + error.message);
-        return;
-      }
+      ws.close(1008, 'Authentication failed: ' + error.message);
+      return;
     }
   } else {
     console.log(`WebSocket connected: ${userId}`);
   }
 
-  // ✅ Store connection with heartbeat timestamp
-  connections.set(userId, { ws, role: null, tripId: null, location: null, lastHeartbeat: Date.now() });
+  // ✅ Check per-user connection limit
+  if (!checkUserConnectionLimit(userId)) {
+    console.log(`🚫 [WS Limit] User ${userId} at connection limit, closing oldest connection`);
+    // Close oldest connection for this user to allow new one
+    const existingConn = connections.get(userId);
+    if (existingConn && existingConn.ws) {
+      existingConn.ws.close(1000, 'New connection opened from another device');
+    }
+  }
+
+  // ✅ Store connection with heartbeat timestamp and connection ID
+  connections.set(userId, { ws, connectionId, role: null, tripId: null, location: null, lastHeartbeat: Date.now() });
+
+  // ✅ Track connection for this user
+  trackUserConnection(userId, connectionId);
+  console.log(`📊 [WS Stats] Active connections: ${connections.size}, Unique users: ${userConnections.size}`);
 
   // Special handling for API server connections
   if (userId === 'api-server') {
@@ -603,8 +735,12 @@ wss.on('connection', (ws, req) => {
 
   // Handle disconnect
   ws.on('close', () => {
-    console.log(`User ${userId} disconnected`);
+    console.log(`User ${userId} disconnected (${connectionId})`);
     const userConn = connections.get(userId);
+
+    // ✅ Untrack this connection
+    untrackUserConnection(userId, connectionId);
+    console.log(`📊 [WS Stats] After disconnect - Active connections: ${connections.size - 1}, Unique users: ${userConnections.size}`);
 
     // ✅ Remove ALL driver ID mappings (handles String, Number, and userId variations)
     if (userConn?.driverId) {
