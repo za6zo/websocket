@@ -27,6 +27,14 @@ COPY websocket-server.js ./
 COPY websocket-bridge.js ./
 COPY start-services.js ./
 COPY push-notification.js ./
+COPY logger.js ./
+
+# Copy module directories
+COPY config/ ./config/
+COPY handlers/ ./handlers/
+COPY utils/ ./utils/
+COPY notifications/ ./notifications/
+COPY routes/ ./routes/
 
 # Create directory for push notification service (if needed)
 RUN mkdir -p lib/services
