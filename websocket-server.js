@@ -8,12 +8,25 @@ const express = require('express');
 const fetch = require('node-fetch');
 const pushNotificationService = require('./push-notification');
 const jwt = require('jsonwebtoken');
+const logger = require('./logger'); // Production-safe logger
 
 const WS_PORT = process.env.WS_PORT || 8080;
 const HTTP_PORT = process.env.HTTP_PORT || 8090;
 const API_URL = process.env.API_URL || 'http://localhost:3000';
-const JWT_SECRET = process.env.JWT_SECRET || 'dev-secret-change-in-production-12345678';
-const NOTIFY_API_KEY = process.env.NOTIFY_API_KEY || JWT_SECRET; // Use JWT_SECRET as fallback for API key
+
+// SECURITY: In production, JWT_SECRET MUST be set via environment variable
+const IS_PRODUCTION = process.env.NODE_ENV === 'production';
+const JWT_SECRET = process.env.JWT_SECRET;
+if (!JWT_SECRET) {
+  if (IS_PRODUCTION) {
+    logger.error('❌ CRITICAL: JWT_SECRET is not set! Server cannot start in production without it.');
+    process.exit(1);
+  } else {
+    logger.warn('⚠️ JWT_SECRET not set - using development default (NOT SAFE FOR PRODUCTION)');
+  }
+}
+const EFFECTIVE_JWT_SECRET = JWT_SECRET || 'dev-secret-change-in-production-12345678';
+const NOTIFY_API_KEY = process.env.NOTIFY_API_KEY || EFFECTIVE_JWT_SECRET;
 
 
 
@@ -620,17 +633,17 @@ wss.on('connection', (ws, req) => {
       // First, try to verify with issuer/audience (new tokens)
       let decoded;
       try {
-        decoded = jwt.verify(token, JWT_SECRET, {
+        decoded = jwt.verify(token, EFFECTIVE_JWT_SECRET, {
           issuer: 'za6zo-backend',
           audience: 'za6zo-mobile'
         });
-        console.log(`✅ WebSocket connected: User ${decoded.userId} (JWT verified with issuer/audience)`);
+        logger.log(`✅ WebSocket connected: User ${decoded.userId} (JWT verified with issuer/audience)`);
       } catch (verifyError) {
         // If verification fails due to missing issuer/audience, try without them (old tokens)
         if (verifyError.message.includes('jwt issuer invalid') || verifyError.message.includes('jwt audience invalid')) {
-          console.log('⚠️ Token missing issuer/audience claims, verifying without them (backward compatibility)');
-          decoded = jwt.verify(token, JWT_SECRET);
-          console.log(`✅ WebSocket connected: User ${decoded.userId} (JWT verified - legacy token)`);
+          logger.log('⚠️ Token missing issuer/audience claims, verifying without them (backward compatibility)');
+          decoded = jwt.verify(token, EFFECTIVE_JWT_SECRET);
+          logger.log(`✅ WebSocket connected: User ${decoded.userId} (JWT verified - legacy token)`);
         } else {
           // Re-throw other errors (expired, malformed, etc.)
           throw verifyError;
@@ -638,7 +651,7 @@ wss.on('connection', (ws, req) => {
       }
 
       if (!decoded || !decoded.userId) {
-        console.error('❌ JWT verification failed: Missing userId in payload');
+        logger.error('❌ JWT verification failed: Missing userId in payload');
         ws.close(1008, 'Invalid token payload');
         return;
       }
