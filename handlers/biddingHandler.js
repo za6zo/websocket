@@ -4,6 +4,15 @@
  */
 
 const WebSocket = require('ws');
+const fetch = require('node-fetch');
+
+// Try to load push notification service
+let pushNotificationService = null;
+try {
+  pushNotificationService = require('../push-notification');
+} catch (e) {
+  console.warn('Push notification service not available in bidding handler');
+}
 
 // Will be initialized from main server
 let connections = null;
@@ -12,6 +21,9 @@ let driverIdToUserId = null;
 let riderIdToUserId = null;
 let joinTrip = null;
 let liveTrackingSessions = null;
+
+// API URL for fetching push tokens
+const API_URL = process.env.API_URL || 'https://admin.za6zo.cloud';
 
 /**
  * Initialize bidding handler with shared state
@@ -26,16 +38,53 @@ function init(deps) {
 }
 
 /**
+ * Send push notification to a driver for new trip request
+ * @param {string|number} driverId - Driver ID
+ * @param {object} tripRequest - Trip request payload
+ */
+async function sendDriverPushNotification(driverId, tripRequest) {
+  if (!pushNotificationService) return;
+
+  try {
+    // Get driver's push token from the API
+    const response = await fetch(`${API_URL}/api/drivers/${driverId}/push-token`);
+    if (!response.ok) {
+      // Try alternate endpoint
+      const altResponse = await fetch(`${API_URL}/api/users/${driverId}/push-token`);
+      if (!altResponse.ok) {
+        console.log(`No push token found for driver ${driverId}`);
+        return;
+      }
+      const { expoPushToken } = await altResponse.json();
+      if (expoPushToken) {
+        await pushNotificationService.notifyNewTripRequest(expoPushToken, tripRequest);
+        console.log(`Push notification sent to driver ${driverId}`);
+      }
+      return;
+    }
+
+    const { expoPushToken } = await response.json();
+    if (expoPushToken) {
+      await pushNotificationService.notifyNewTripRequest(expoPushToken, tripRequest);
+      console.log(`Push notification sent to driver ${driverId}`);
+    }
+  } catch (error) {
+    console.error(`Failed to send push notification to driver ${driverId}:`, error.message);
+  }
+}
+
+/**
  * Broadcast new trip request to drivers
  * @param {object} data - Trip request data
  */
-function broadcastToDrivers(data) {
+async function broadcastToDrivers(data) {
   const { tripRequest, targetDriverIds, estimatedFare, vehicleType } = data;
 
-  console.log('Broadcasting trip request to drivers');
-  console.log('Target driver IDs:', targetDriverIds);
+  console.log('[WS-SERVER] Broadcasting trip request to drivers');
+  console.log('[WS-SERVER] Target driver IDs:', targetDriverIds);
 
   let driversNotified = 0;
+  const driversToNotifyPush = [];
 
   // Prepare the payload with bidding information
   const broadcastPayload = {
@@ -70,18 +119,43 @@ function broadcastToDrivers(data) {
         if (!isTargetDriver) return;
       }
 
+      // Track driver for push notification
+      const driverId = userConn.driverId || userId;
+      driversToNotifyPush.push(driverId);
+
       if (userConn.ws.readyState === WebSocket.OPEN) {
         userConn.ws.send(JSON.stringify({
           type: 'new_trip_request',
           payload: broadcastPayload
         }));
         driversNotified++;
-        console.log(`Notified driver ${userId} about new trip request`);
+        console.log(`[WS-SERVER] Notified driver ${userId} about new trip request`);
       }
     }
   });
 
   console.log(`Broadcast sent to ${driversNotified} drivers`);
+
+  // Also send push notifications to all target drivers for reliability
+  // This ensures drivers receive notification even if WebSocket message is lost
+  if (pushNotificationService && driversToNotifyPush.length > 0) {
+    console.log(`[PUSH] Sending push notifications to ${driversToNotifyPush.length} drivers`);
+    for (const driverId of driversToNotifyPush) {
+      sendDriverPushNotification(driverId, broadcastPayload).catch(err => {
+        console.error(`[PUSH] Error sending to driver ${driverId}:`, err.message);
+      });
+    }
+  }
+
+  // If targetDriverIds specified but no connected drivers found, send push to all targets
+  if (targetDriverIds && targetDriverIds.length > 0 && driversNotified === 0) {
+    console.log(`[PUSH] No connected drivers, sending push to ${targetDriverIds.length} target drivers`);
+    for (const driverId of targetDriverIds) {
+      sendDriverPushNotification(driverId, broadcastPayload).catch(err => {
+        console.error(`[PUSH] Error sending to target driver ${driverId}:`, err.message);
+      });
+    }
+  }
 }
 
 /**

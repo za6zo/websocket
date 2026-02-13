@@ -44,12 +44,20 @@ class PushNotificationService {
       return { success: false, error: 'Push notifications not configured' };
     }
 
+    if (!SUPABASE_ANON_KEY) {
+      console.error('Supabase anon key not configured');
+      return { success: false, error: 'Push notifications API key not configured' };
+    }
+
+    console.log(`[PUSH] Sending ${messages.length} push notification(s) to ${SUPABASE_FUNCTION_URL}`);
+
     try {
       const response = await fetch(SUPABASE_FUNCTION_URL, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
+          'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+          'apikey': SUPABASE_ANON_KEY
         },
         body: JSON.stringify({ messages })
       });
@@ -57,10 +65,13 @@ class PushNotificationService {
       const result = await response.json();
 
       if (!response.ok) {
-        console.error('Push notification error:', result);
-        return { success: false, error: result.error };
+        console.error(`[PUSH] Error (${response.status}):`, result);
+        console.error('[PUSH] Function URL:', SUPABASE_FUNCTION_URL);
+        console.error('[PUSH] API Key present:', !!SUPABASE_ANON_KEY);
+        return { success: false, error: result.error || result.message || 'Unknown error' };
       }
 
+      console.log('[PUSH] Success:', result);
       return { success: true, ...result };
     } catch (error) {
       console.error('Failed to send push notifications:', error);
