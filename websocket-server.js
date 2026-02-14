@@ -33,12 +33,24 @@ const httpRoutes = require('./routes/httpRoutes');
 
 // Try to load optional modules
 let pushNotificationService = null;
+let fcmNotificationService = null;
 let logger = console;
 
 try {
   pushNotificationService = require('./push-notification');
 } catch (e) {
   console.warn('Push notification service not available');
+}
+
+try {
+  fcmNotificationService = require('./fcm-notification');
+  if (fcmNotificationService.isAvailable()) {
+    console.log('✅ FCM notification service loaded');
+  } else {
+    console.warn('⚠️ FCM service loaded but not initialized - check Firebase credentials');
+  }
+} catch (e) {
+  console.warn('FCM notification service not available:', e.message);
 }
 
 try {
@@ -190,8 +202,32 @@ async function sendToUser(userId, message) {
 
 /**
  * Send push notification when WebSocket is unavailable
+ * Supports both Expo Push Tokens and FCM Tokens
  */
 async function sendPushNotificationFallback(userId, message) {
+  const { type, payload } = message;
+
+  // Try FCM first (native Firebase)
+  if (fcmNotificationService && fcmNotificationService.isAvailable()) {
+    try {
+      // Try to get FCM token
+      const fcmResponse = await fetch(`${config.API_URL}/api/users/${userId}/fcm-token`);
+      if (fcmResponse.ok) {
+        const { fcmToken } = await fcmResponse.json();
+        if (fcmToken) {
+          const fcmResult = await sendFcmNotification(fcmToken, type, payload);
+          if (fcmResult.success) {
+            console.log(`[FCM] Sent notification (${type}) to ${userId}`);
+            return; // FCM succeeded, no need for Expo
+          }
+        }
+      }
+    } catch (error) {
+      console.warn(`[FCM] Failed for ${userId}, falling back to Expo:`, error.message);
+    }
+  }
+
+  // Fallback to Expo Push
   if (!pushNotificationService) return;
 
   try {
@@ -200,8 +236,6 @@ async function sendPushNotificationFallback(userId, message) {
 
     const { expoPushToken } = await response.json();
     if (!expoPushToken) return;
-
-    const { type, payload } = message;
 
     // Map message types to push notification methods
     const notificationMap = {
@@ -226,14 +260,52 @@ async function sendPushNotificationFallback(userId, message) {
 
     if (notificationMap[type]) {
       await notificationMap[type]();
-      console.log(`Sent push notification (${type}) to ${userId}`);
+      console.log(`[Expo] Sent push notification (${type}) to ${userId}`);
     } else {
       await pushNotificationService.sendToUser(expoPushToken, 'Za6Zo Notification', `New ${type} notification`, { type, ...payload });
-      console.log(`Sent generic push notification (${type}) to ${userId}`);
+      console.log(`[Expo] Sent generic push notification (${type}) to ${userId}`);
     }
   } catch (error) {
     console.error(`Failed to send push notification to ${userId}:`, error.message);
   }
+}
+
+/**
+ * Send FCM notification based on message type
+ */
+async function sendFcmNotification(fcmToken, type, payload) {
+  if (!fcmNotificationService) return { success: false };
+
+  const fcmMap = {
+    'new_trip_request': () => fcmNotificationService.notifyNewTripRequest(fcmToken, payload),
+    'bid_accepted': () => fcmNotificationService.notifyBidAccepted(fcmToken, payload),
+    'driver_arrived': () => fcmNotificationService.notifyDriverArrived(fcmToken, payload),
+    'trip_started': () => fcmNotificationService.notifyTripStarted(fcmToken, payload),
+    'tripStarted': () => fcmNotificationService.notifyTripStarted(fcmToken, payload),
+    'trip_completed': () => fcmNotificationService.notifyTripCompleted(fcmToken, payload),
+    'trip_cancelled': () => fcmNotificationService.notifyTripCancelled(fcmToken, payload),
+    'new_bid': () => fcmNotificationService.notifyNewBid(fcmToken, payload),
+    'driver_accepted_request': () => fcmNotificationService.notifySharedRideAccepted(fcmToken, payload),
+    'shared_ride_accepted': () => fcmNotificationService.notifySharedRideAccepted(fcmToken, payload),
+    'driver_rejected_request': () => fcmNotificationService.notifySharedRideRejected(fcmToken, payload),
+    'city_trip_request': () => fcmNotificationService.notifyCityTripRequest(fcmToken, payload),
+    'city_trip_accepted': () => fcmNotificationService.notifyCityTripAccepted(fcmToken, payload),
+    'subscription_request': () => fcmNotificationService.notifySubscriptionRequest(fcmToken, payload),
+    'subscription_status': () => fcmNotificationService.notifySubscriptionStatus(fcmToken, payload),
+    'driver_verified': () => fcmNotificationService.notifyDriverVerified(fcmToken, payload),
+  };
+
+  if (fcmMap[type]) {
+    return await fcmMap[type]();
+  }
+
+  // Generic FCM notification
+  return await fcmNotificationService.sendToDevice(
+    fcmToken,
+    'Za6Zo Notification',
+    `New ${type} notification`,
+    { type, ...payload }
+  );
 }
 
 /**
